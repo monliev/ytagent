@@ -28,13 +28,17 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Set database URL dynamically from environment
-mysql_user = os.getenv("MYSQL_USER", "ytagent")
-mysql_pass = os.getenv("MYSQL_PASSWORD", "ytagent_db_pass_2026")
-mysql_host = os.getenv("MYSQL_HOST", "127.0.0.1")
-mysql_port = os.getenv("MYSQL_PORT", "3306")
-mysql_db = os.getenv("MYSQL_DATABASE", "ytagent")
-
-database_url = f"mysql+pymysql://{mysql_user}:{mysql_pass}@{mysql_host}:{mysql_port}/{mysql_db}"
+# Prefer SYNC_DATABASE_URL (explicitly set in docker-compose environment)
+# Fall back to building from individual MYSQL_* variables
+database_url = os.getenv("SYNC_DATABASE_URL") or (
+    "mysql+pymysql://{user}:{pw}@{host}:{port}/{db}".format(
+        user=os.getenv("MYSQL_USER", "ytagent"),
+        pw=os.getenv("MYSQL_PASSWORD", "ytagent_db_pass_2026"),
+        host=os.getenv("MYSQL_HOST", "127.0.0.1"),
+        port=os.getenv("MYSQL_PORT", "3306"),
+        db=os.getenv("MYSQL_DATABASE", "ytagent"),
+    )
+)
 config.set_main_option("sqlalchemy.url", database_url)
 
 target_metadata = Base.metadata
