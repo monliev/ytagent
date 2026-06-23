@@ -76,7 +76,16 @@ class UploadServiceSync:
         if not project_rec:
             raise ValueError(f"GCP Project details not found for project_id {project_id}")
 
-        client_id, client_secret, token_uri = self.load_client_info(project_rec.client_secret_path)
+        if project_rec.client_secret_json:
+            decrypted = decrypt_token(channel_id, project_rec.client_secret_json)
+            data = json.loads(decrypted)
+            root_key = "installed" if "installed" in data else "web"
+            if root_key not in data:
+                raise KeyError("Invalid client secret JSON format. Could not find 'installed' or 'web' root.")
+            info = data[root_key]
+            client_id, client_secret, token_uri = info["client_id"], info["client_secret"], info.get("token_uri", "https://oauth2.googleapis.com/token")
+        else:
+            client_id, client_secret, token_uri = self.load_client_info(project_rec.client_secret_path)
         
         # Decrypt tokens
         refresh_token = decrypt_token(channel_id, creds_rec.oauth_refresh_token_encrypted)

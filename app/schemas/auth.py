@@ -6,6 +6,7 @@ class LoginRequest(BaseModel):
     """Schema for login request."""
     username: str = Field(..., description="Username or Telegram User ID")
     password: str = Field(..., description="Password")
+    recaptcha_token: Optional[str] = Field(None, description="Optional Google reCAPTCHA v2 token")
 
 class TokenResponse(BaseModel):
     """Schema for returning an access token."""

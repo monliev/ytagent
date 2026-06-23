@@ -2,6 +2,7 @@ import httpx
 import structlog
 from typing import Optional, Any
 from app.core.config import settings
+from app.services.settings_service import get_telegram_bot_token_async
 
 logger = structlog.get_logger()
 
@@ -9,12 +10,22 @@ class TelegramAPI:
     """Lightweight client wrapper to interact asynchronously with Telegram Bot API."""
 
     def __init__(self):
-        self.token = settings.TELEGRAM_BOT_TOKEN
-        self.base_url = f"https://api.telegram.org/bot{self.token}"
+        self.default_token = settings.TELEGRAM_BOT_TOKEN
 
-    async def send_message(self, chat_id: int, text: str, reply_markup: Optional[dict[str, Any]] = None) -> bool:
+    async def _get_token(self, db: Optional[Any] = None) -> str:
+        if db is not None:
+            return await get_telegram_bot_token_async(db)
+        return self.default_token
+
+    async def _get_base_url(self, db: Optional[Any] = None) -> str:
+        token = await self._get_token(db)
+        return f"https://api.telegram.org/bot{token}"
+
+    async def send_message(self, chat_id: int, text: str, reply_markup: Optional[dict[str, Any]] = None, db: Optional[Any] = None) -> bool:
         """Send HTML text message to a specific Telegram chat."""
-        url = f"{self.base_url}/sendMessage"
+        base_url = await self._get_base_url(db)
+        token = await self._get_token(db)
+        url = f"{base_url}/sendMessage"
         payload = {
             "chat_id": chat_id,
             "text": text,
@@ -24,7 +35,7 @@ class TelegramAPI:
             payload["reply_markup"] = reply_markup
             
         # Bypass network call if using dummy credentials during local E2E simulation
-        if "Placeholder" in self.token:
+        if "Placeholder" in token:
             logger.info("telegram_send_message_skipped_placeholder", chat_id=chat_id, text=text[:100])
             return True
 
@@ -39,16 +50,18 @@ class TelegramAPI:
             logger.error("telegram_send_message_failed", error=str(e))
             return False
 
-    async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None) -> bool:
+    async def answer_callback_query(self, callback_query_id: str, text: Optional[str] = None, db: Optional[Any] = None) -> bool:
         """Answer Telegram inline callback query to clear button loading state."""
-        url = f"{self.base_url}/answerCallbackQuery"
+        base_url = await self._get_base_url(db)
+        token = await self._get_token(db)
+        url = f"{base_url}/answerCallbackQuery"
         payload = {
             "callback_query_id": callback_query_id
         }
         if text:
             payload["text"] = text
             
-        if "Placeholder" in self.token:
+        if "Placeholder" in token:
             logger.info("telegram_answer_callback_skipped_placeholder", callback_id=callback_query_id, text=text)
             return True
 
@@ -60,9 +73,11 @@ class TelegramAPI:
             logger.error("telegram_answer_callback_failed", error=str(e))
             return False
 
-    async def edit_message_text(self, chat_id: int, message_id: int, text: str, reply_markup: Optional[dict[str, Any]] = None) -> bool:
+    async def edit_message_text(self, chat_id: int, message_id: int, text: str, reply_markup: Optional[dict[str, Any]] = None, db: Optional[Any] = None) -> bool:
         """Replace text content of an existing Telegram message."""
-        url = f"{self.base_url}/editMessageText"
+        base_url = await self._get_base_url(db)
+        token = await self._get_token(db)
+        url = f"{base_url}/editMessageText"
         payload = {
             "chat_id": chat_id,
             "message_id": message_id,
@@ -72,7 +87,7 @@ class TelegramAPI:
         if reply_markup:
             payload["reply_markup"] = reply_markup
 
-        if "Placeholder" in self.token:
+        if "Placeholder" in token:
             logger.info("telegram_edit_message_skipped_placeholder", chat_id=chat_id, message_id=message_id, text=text[:100])
             return True
 

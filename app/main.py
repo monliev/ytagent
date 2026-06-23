@@ -7,6 +7,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.channels import router as channels_router
 from app.api.v1.logs import router as logs_router
 from app.api.v1.telegram import router as telegram_router
+from app.api.v1.settings import router as settings_router
 
 logger = structlog.get_logger()
 
@@ -31,6 +32,7 @@ app.include_router(channels_router, prefix="/api/v1/channels", tags=["channels"]
 app.include_router(logs_router, prefix="/api/v1/logs", tags=["logs"])
 app.include_router(telegram_router, prefix="/api/v1/telegram", tags=["telegram"])
 app.include_router(videos_router, prefix="/api/v1/videos", tags=["videos"])
+app.include_router(settings_router, prefix="/api/v1/settings", tags=["settings"])
 
 @app.get("/health")
 async def health_check():

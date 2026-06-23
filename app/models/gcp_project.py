@@ -1,6 +1,7 @@
 import enum
+from typing import Optional
 from datetime import datetime, date
-from sqlalchemy import BigInteger, ForeignKey, String, Integer, Date, Enum, DateTime, func
+from sqlalchemy import BigInteger, ForeignKey, String, Integer, Date, Enum, DateTime, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -19,7 +20,8 @@ class GCPProject(Base):
     channel_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("channels.id", ondelete="CASCADE"), nullable=False)
     project_name: Mapped[str] = mapped_column(String(128), nullable=False)
     project_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
-    client_secret_path: Mapped[str] = mapped_column(String(256), nullable=False)
+    client_secret_path: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    client_secret_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
     quota_limit: Mapped[int] = mapped_column(Integer, default=10000, nullable=False)
     quota_used: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

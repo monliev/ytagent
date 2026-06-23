@@ -11,6 +11,7 @@ from app.models.analytics_record import AnalyticsRecord
 from app.models.performance_insight import PerformanceInsight, InsightType, InsightSeverity
 from app.models.system_log import SystemLog, LogLevel
 from app.models.notification_history import NotificationHistory, NotificationType, NotificationChannel, NotificationStatus
+from app.models.system_setting import SystemSetting
 
 __all__ = [
     "Base",
@@ -39,4 +40,5 @@ __all__ = [
     "NotificationType",
     "NotificationChannel",
     "NotificationStatus",
+    "SystemSetting",
 ]

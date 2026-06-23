@@ -68,11 +68,16 @@ class NotificationService:
             ]
         }
 
+        # Resolve supervisor ID dynamically
+        from app.services.settings_service import get_supervisor_telegram_id_async
+        supervisor_id = await get_supervisor_telegram_id_async(db)
+
         # Send Telegram notification
         success = await self.telegram_api.send_message(
-            chat_id=self.supervisor_id,
+            chat_id=supervisor_id,
             text=text,
-            reply_markup=reply_markup
+            reply_markup=reply_markup,
+            db=db
         )
         if success:
             logger.info("notify_video_ready_success", video_id=video.id)

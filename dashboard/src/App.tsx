@@ -85,8 +85,8 @@ function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   
-  // Navigation tabs: dashboard, staging, queue, schedule, analytics, channels, logs
-  const [currentTab, setCurrentTab] = useState<'dashboard' | 'staging' | 'queue' | 'schedule' | 'analytics' | 'channels' | 'logs'>('dashboard');
+  // Navigation tabs: dashboard, staging, queue, schedule, analytics, channels, logs, settings
+  const [currentTab, setCurrentTab] = useState<'dashboard' | 'staging' | 'queue' | 'schedule' | 'analytics' | 'channels' | 'logs' | 'settings'>('dashboard');
   
   // Channel Switcher (Context selector)
   const [selectedChannelId, setSelectedChannelId] = useState<number | 'all'>('all');
@@ -131,6 +131,26 @@ function App() {
   // Login form state
   const [loginUsername, setLoginUsername] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  
+  // reCAPTCHA state
+  const [recaptchaSiteKey, setRecaptchaSiteKey] = useState<string | null>(null);
+
+  // Settings Tab state
+  const [settingsTelegramToken, setSettingsTelegramToken] = useState('');
+  const [settingsSupervisorId, setSettingsSupervisorId] = useState('');
+  const [settingsCfAiUrl, setSettingsCfAiUrl] = useState('');
+  const [settingsRecaptchaSiteKey, setSettingsRecaptchaSiteKey] = useState('');
+  const [settingsRecaptchaSecretKey, setSettingsRecaptchaSecretKey] = useState('');
+  
+  // GCP Projects & Credentials state
+  const [selectedSettingsChannelId, setSelectedSettingsChannelId] = useState<number | ''>('');
+  const [channelProjects, setChannelProjects] = useState<any[]>([]);
+  const [gcpProjectName, setGcpProjectName] = useState('');
+  const [gcpProjectId, setGcpProjectId] = useState('');
+  const [gcpClientSecretJson, setGcpClientSecretJson] = useState('');
+  const [gcpQuotaLimit, setGcpQuotaLimit] = useState(10000);
+  const [oauthGcpProjectId, setOauthGcpProjectId] = useState('');
+  const [oauthRefreshToken, setOauthRefreshToken] = useState('');
   
   // UI Toast and loading indicators
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -212,24 +232,212 @@ function App() {
     }
   }, [token]);
 
+  // Fetch public settings (reCAPTCHA site key) on mount
+  useEffect(() => {
+    const fetchPublicSettings = async () => {
+      try {
+        const res = await fetch(`${API_URL}/settings/public`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.recaptcha_site_key) {
+            setRecaptchaSiteKey(data.recaptcha_site_key);
+            // Load reCAPTCHA script dynamically
+            if (!document.getElementById('recaptcha-script')) {
+              const script = document.createElement('script');
+              script.id = 'recaptcha-script';
+              script.src = 'https://www.google.com/recaptcha/api.js';
+              script.async = true;
+              script.defer = true;
+              document.body.appendChild(script);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load public settings", e);
+      }
+    };
+    fetchPublicSettings();
+  }, []);
+
   useEffect(() => {
     if (token) {
       refreshAllData();
     }
   }, [token, selectedChannelId, logPage, logLevelFilter, logServiceFilter]);
 
+  // Load settings when tab is set to settings, and load projects when channel changes
+  useEffect(() => {
+    if (token && currentTab === 'settings') {
+      fetchSettings();
+      if (selectedSettingsChannelId) {
+        fetchChannelProjects(selectedSettingsChannelId);
+      } else {
+        setChannelProjects([]);
+      }
+    }
+  }, [token, currentTab, selectedSettingsChannelId]);
+
+  const fetchSettings = async () => {
+    try {
+      const res = await fetch(`${API_URL}/settings/`, { headers: getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setSettingsTelegramToken(data.telegram_bot_token || '');
+        setSettingsSupervisorId(data.supervisor_telegram_id ? String(data.supervisor_telegram_id) : '');
+        setSettingsCfAiUrl(data.cf_ai_url || '');
+        setSettingsRecaptchaSiteKey(data.recaptcha_site_key || '');
+        setSettingsRecaptchaSecretKey(data.recaptcha_secret_key || '');
+      }
+    } catch (e) {
+      console.error(e);
+      triggerToast('Failed to load system settings.', 'error');
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch(`${API_URL}/settings/`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          telegram_bot_token: settingsTelegramToken,
+          supervisor_telegram_id: settingsSupervisorId ? parseInt(settingsSupervisorId) : null,
+          cf_ai_url: settingsCfAiUrl,
+          recaptcha_site_key: settingsRecaptchaSiteKey,
+          recaptcha_secret_key: settingsRecaptchaSecretKey
+        })
+      });
+      if (res.ok) {
+        triggerToast('System settings updated successfully!');
+        fetchSettings();
+      } else {
+        const data = await res.json();
+        triggerToast(data.detail || 'Failed to save settings.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error saving settings.', 'error');
+    }
+  };
+
+  const fetchChannelProjects = async (chanId: number) => {
+    try {
+      const res = await fetch(`${API_URL}/channels/${chanId}/projects`, { headers: getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setChannelProjects(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddGcpProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSettingsChannelId) return;
+    try {
+      // Validate client secret json is a valid JSON
+      try {
+        JSON.parse(gcpClientSecretJson);
+      } catch (err) {
+        triggerToast('Client Secret must be a valid JSON format.', 'error');
+        return;
+      }
+
+      const res = await fetch(`${API_URL}/channels/${selectedSettingsChannelId}/projects`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          project_name: gcpProjectName,
+          project_id: gcpProjectId,
+          client_secret_json: gcpClientSecretJson,
+          quota_limit: gcpQuotaLimit,
+        })
+      });
+      if (res.ok) {
+        triggerToast('GCP Project added successfully!');
+        setGcpProjectName('');
+        setGcpProjectId('');
+        setGcpClientSecretJson('');
+        fetchChannelProjects(selectedSettingsChannelId);
+      } else {
+        const data = await res.json();
+        triggerToast(data.detail || 'Failed to add GCP project.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error adding GCP project.', 'error');
+    }
+  };
+
+  const handleDeleteGcpProject = async (projId: number) => {
+    if (!selectedSettingsChannelId) return;
+    if (!confirm('Are you sure you want to delete this GCP Project?')) return;
+    try {
+      const res = await fetch(`${API_URL}/channels/${selectedSettingsChannelId}/projects/${projId}`, {
+        method: 'DELETE',
+        headers: getHeaders()
+      });
+      if (res.ok) {
+        triggerToast('GCP Project deleted successfully.');
+        fetchChannelProjects(selectedSettingsChannelId);
+      } else {
+        triggerToast('Failed to delete GCP project.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error deleting GCP project.', 'error');
+    }
+  };
+
+  const handleSaveOAuthToken = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSettingsChannelId || !oauthGcpProjectId) return;
+    try {
+      const res = await fetch(`${API_URL}/channels/${selectedSettingsChannelId}/credentials`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          gcp_project_id: oauthGcpProjectId,
+          refresh_token: oauthRefreshToken,
+        })
+      });
+      if (res.ok) {
+        triggerToast('OAuth Refresh Token saved successfully!');
+        setOauthRefreshToken('');
+      } else {
+        const data = await res.json();
+        triggerToast(data.detail || 'Failed to save OAuth token.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error saving OAuth token.', 'error');
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {
+      const recaptchaResponse = recaptchaSiteKey ? (window as any).grecaptcha?.getResponse() : null;
+      if (recaptchaSiteKey && !recaptchaResponse) {
+        triggerToast('Please complete the reCAPTCHA verification.', 'error');
+        setLoading(false);
+        return;
+      }
+      
       const res = await fetch(`${API_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: loginUsername, password: loginPassword }),
+        body: JSON.stringify({
+          username: loginUsername,
+          password: loginPassword,
+          recaptcha_token: recaptchaResponse || undefined
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
         triggerToast(data.detail || 'Login failed.', 'error');
+        if (recaptchaSiteKey) {
+          (window as any).grecaptcha?.reset();
+        }
         return;
       }
       localStorage.setItem('token', data.access_token);
@@ -501,6 +709,12 @@ function App() {
             />
           </div>
 
+          {recaptchaSiteKey && (
+            <div className="form-group" style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
+              <div className="g-recaptcha" data-sitekey={recaptchaSiteKey} data-theme="dark"></div>
+            </div>
+          )}
+
           <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
             {loading ? 'Logging in...' : 'Sign In'}
           </button>
@@ -609,6 +823,13 @@ function App() {
             onClick={() => setCurrentTab('logs')}
           >
             <span>📋</span> System Logs
+          </div>
+          <div 
+            id="nav-settings"
+            className={`nav-item ${currentTab === 'settings' ? 'active' : ''}`}
+            onClick={() => setCurrentTab('settings')}
+          >
+            <span>🔧</span> Global Settings
           </div>
         </nav>
 
@@ -1081,6 +1302,274 @@ function App() {
                   Next ▶
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 8: Settings */}
+        {currentTab === 'settings' && (
+          <div>
+            <div className="page-header">
+              <div className="page-title-group">
+                <h1>Global & Integration Settings</h1>
+                <p>Configure Telegram, Cloudflare AI, reCAPTCHA, and manage GCP Projects / OAuth details</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '24px', alignItems: 'start' }}>
+              
+              {/* Global Settings Card */}
+              <div className="card" style={{ padding: '24px', gap: '16px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '8px' }}>
+                  🌐 Global System Settings
+                </h3>
+                
+                <form onSubmit={handleSaveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div className="form-group">
+                    <label htmlFor="settings-tg-token">Telegram Bot Token</label>
+                    <input
+                      id="settings-tg-token"
+                      type="password"
+                      className="form-input"
+                      value={settingsTelegramToken}
+                      onChange={e => setSettingsTelegramToken(e.target.value)}
+                      placeholder="Enter Telegram bot token..."
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="settings-tg-supervisor">Telegram Supervisor ID</label>
+                    <input
+                      id="settings-tg-supervisor"
+                      type="text"
+                      className="form-input"
+                      value={settingsSupervisorId}
+                      onChange={e => setSettingsSupervisorId(e.target.value)}
+                      placeholder="e.g. 6596472755"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="settings-cf-url">Cloudflare AI URL</label>
+                    <input
+                      id="settings-cf-url"
+                      type="text"
+                      className="form-input"
+                      value={settingsCfAiUrl}
+                      onChange={e => setSettingsCfAiUrl(e.target.value)}
+                      placeholder="https://api.cloudflare.com/client/v4/accounts/.../ai/run/..."
+                    />
+                  </div>
+
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                    <div className="form-group">
+                      <label htmlFor="settings-recaptcha-site">reCAPTCHA Site Key</label>
+                      <input
+                        id="settings-recaptcha-site"
+                        type="text"
+                        className="form-input"
+                        value={settingsRecaptchaSiteKey}
+                        onChange={e => setSettingsRecaptchaSiteKey(e.target.value)}
+                        placeholder="Public site key"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="settings-recaptcha-secret">reCAPTCHA Secret Key</label>
+                      <input
+                        id="settings-recaptcha-secret"
+                        type="password"
+                        className="form-input"
+                        value={settingsRecaptchaSecretKey}
+                        onChange={e => setSettingsRecaptchaSecretKey(e.target.value)}
+                        placeholder="Private secret key"
+                      />
+                    </div>
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start', marginTop: '8px' }}>
+                    💾 Save System Settings
+                  </button>
+                </form>
+              </div>
+
+              {/* GCP Projects & OAuth Manager Card */}
+              <div className="card" style={{ padding: '24px', gap: '16px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '8px' }}>
+                  🔑 GCP Projects & OAuth Manager
+                </h3>
+
+                <div className="form-group" style={{ marginBottom: '16px' }}>
+                  <label htmlFor="settings-channel-select">Select Target Channel</label>
+                  <select
+                    id="settings-channel-select"
+                    className="form-input"
+                    value={selectedSettingsChannelId}
+                    onChange={e => setSelectedSettingsChannelId(e.target.value ? parseInt(e.target.value) : '')}
+                  >
+                    <option value="">-- Choose a Channel --</option>
+                    {channels.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedSettingsChannelId ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                    
+                    {/* Active GCP Projects List */}
+                    <div>
+                      <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                        Active GCP Projects for Channel
+                      </h4>
+                      {channelProjects.length > 0 ? (
+                        <div className="table-container" style={{ margin: 0, border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                          <table style={{ fontSize: '0.85rem' }}>
+                            <thead>
+                              <tr>
+                                <th>Project Name</th>
+                                <th>Project ID</th>
+                                <th>Quota Limit</th>
+                                <th>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {channelProjects.map(p => (
+                                <tr key={p.id}>
+                                  <td style={{ fontWeight: 600 }}>{p.project_name}</td>
+                                  <td>{p.project_id}</td>
+                                  <td>{p.quota_limit.toLocaleString()}</td>
+                                  <td>
+                                    <button 
+                                      className="btn btn-danger" 
+                                      style={{ padding: '4px 8px', fontSize: '0.75rem' }} 
+                                      onClick={() => handleDeleteGcpProject(p.id)}
+                                    >
+                                      🗑️ Delete
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No GCP Projects configured for this channel yet.</p>
+                      )}
+                    </div>
+
+                    {/* Add GCP Project Form */}
+                    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                      <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                        ➕ Register New GCP Project
+                      </h4>
+                      <form onSubmit={handleAddGcpProject} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                          <div className="form-group">
+                            <label htmlFor="gcp-name">Project Name</label>
+                            <input
+                              id="gcp-name"
+                              type="text"
+                              className="form-input"
+                              value={gcpProjectName}
+                              onChange={e => setGcpProjectName(e.target.value)}
+                              placeholder="e.g. My YT Uploader"
+                              required
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label htmlFor="gcp-id">Project ID</label>
+                            <input
+                              id="gcp-id"
+                              type="text"
+                              className="form-input"
+                              value={gcpProjectId}
+                              onChange={e => setGcpProjectId(e.target.value)}
+                              placeholder="e.g. yt-uploader-12345"
+                              required
+                            />
+                          </div>
+                        </div>
+
+                        <div className="form-group">
+                          <label htmlFor="gcp-json">Client Secrets JSON</label>
+                          <textarea
+                            id="gcp-json"
+                            className="form-input"
+                            style={{ minHeight: '100px', fontFamily: 'monospace', fontSize: '0.8rem' }}
+                            value={gcpClientSecretJson}
+                            onChange={e => setGcpClientSecretJson(e.target.value)}
+                            placeholder='{"web":{"client_id":"...","client_secret":"..."}}'
+                            required
+                          />
+                        </div>
+
+                        <div className="form-group" style={{ width: '50%' }}>
+                          <label htmlFor="gcp-quota">Daily Quota Limit</label>
+                          <input
+                            id="gcp-quota"
+                            type="number"
+                            className="form-input"
+                            value={gcpQuotaLimit}
+                            onChange={e => setGcpQuotaLimit(parseInt(e.target.value))}
+                            required
+                          />
+                        </div>
+
+                        <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start', marginTop: '4px' }}>
+                          ➕ Add GCP Project
+                        </button>
+                      </form>
+                    </div>
+
+                    {/* Channel OAuth Credentials Form */}
+                    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                      <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                        🔑 Register Channel OAuth Refresh Token
+                      </h4>
+                      <form onSubmit={handleSaveOAuthToken} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div className="form-group">
+                          <label htmlFor="oauth-gcp-project">Target GCP Project ID</label>
+                          <select
+                            id="oauth-gcp-project"
+                            className="form-input"
+                            value={oauthGcpProjectId}
+                            onChange={e => setOauthGcpProjectId(e.target.value)}
+                            required
+                          >
+                            <option value="">-- Select GCP Project --</option>
+                            {channelProjects.map(p => (
+                              <option key={p.id} value={p.project_id}>{p.project_name} ({p.project_id})</option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="form-group">
+                          <label htmlFor="oauth-refresh-token">OAuth Refresh Token</label>
+                          <input
+                            id="oauth-refresh-token"
+                            type="password"
+                            className="form-input"
+                            value={oauthRefreshToken}
+                            onChange={e => setOauthRefreshToken(e.target.value)}
+                            placeholder="Enter Google OAuth refresh token..."
+                            required
+                          />
+                        </div>
+
+                        <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start', marginTop: '4px' }}>
+                          💾 Save Channel Credentials
+                        </button>
+                      </form>
+                    </div>
+
+                  </div>
+                ) : (
+                  <div style={{ padding: '40px 20px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)' }}>
+                    Select a channel above to configure its GCP Projects and OAuth credentials.
+                  </div>
+                )}
+              </div>
+
             </div>
           </div>
         )}
