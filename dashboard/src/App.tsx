@@ -1184,20 +1184,101 @@ function App() {
                 </div>
               </div>
               
-              {/* Right Column: Activity log stream */}
-              <div>
-                <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>Recent Activity</h2>
-                <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '350px', overflowY: 'auto' }}>
-                  {logs.slice(0, 5).map(log => (
-                    <div key={log.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <span className={`log-level level-${log.level}`} style={{ padding: '1px 4px', fontSize: '0.65rem' }}>{log.level}</span>
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>{new Date(log.created_at).toLocaleTimeString()}</span>
+              {/* Right Column: Activity log stream & System Health Monitor */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+                <div>
+                  <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>Recent Activity</h2>
+                  <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '350px', overflowY: 'auto' }}>
+                    {logs.slice(0, 5).map(log => (
+                      <div key={log.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span className={`log-level level-${log.level}`} style={{ padding: '1px 4px', fontSize: '0.65rem' }}>{log.level}</span>
+                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>{new Date(log.created_at).toLocaleTimeString()}</span>
+                        </div>
+                        <p style={{ color: 'var(--text-primary)' }}>{log.message}</p>
                       </div>
-                      <p style={{ color: 'var(--text-primary)' }}>{log.message}</p>
-                    </div>
-                  ))}
-                  {logs.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>No logs recorded yet</p>}
+                    ))}
+                    {logs.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>No logs recorded yet</p>}
+                  </div>
+                </div>
+
+                {/* System Health Monitor Widget */}
+                <div>
+                  <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>🖥️ VPS & Storage Health</h2>
+                  <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    {systemHealth ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                        <div style={{ display: 'flex', gap: '16px', marginBottom: '4px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ 
+                              width: '10px', 
+                              height: '10px', 
+                              borderRadius: '50%', 
+                              backgroundColor: systemHealth.celery_online ? '#10b981' : '#ef4444',
+                              boxShadow: systemHealth.celery_online ? '0 0 6px #10b981' : '0 0 6px #ef4444'
+                            }}></span>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>Celery: {systemHealth.celery_online ? 'ONLINE' : 'OFFLINE'}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ 
+                              width: '10px', 
+                              height: '10px', 
+                              borderRadius: '50%', 
+                              backgroundColor: systemHealth.nas.writable ? '#10b981' : '#ef4444',
+                              boxShadow: systemHealth.nas.writable ? '0 0 6px #10b981' : '0 0 6px #ef4444'
+                            }}></span>
+                            <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>NAS Storage: {systemHealth.nas.writable ? 'WRITABLE' : 'ERROR'}</span>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                            <span>CPU Load</span>
+                            <span style={{ fontWeight: 'bold' }}>{systemHealth.cpu_percent}%</span>
+                          </div>
+                          <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ 
+                              width: `${Math.min(systemHealth.cpu_percent, 100)}%`, 
+                              height: '100%', 
+                              backgroundColor: systemHealth.cpu_percent > 80 ? '#ef4444' : '#10b981' 
+                            }}></div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                            <span>RAM Usage</span>
+                            <span style={{ fontWeight: 'bold' }}>{systemHealth.memory.percent}%</span>
+                          </div>
+                          <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ 
+                              width: `${systemHealth.memory.percent}%`, 
+                              height: '100%', 
+                              backgroundColor: systemHealth.memory.percent > 85 ? '#ef4444' : '#4f46e5' 
+                            }}></div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem' }}>
+                            <span>NAS Storage Space</span>
+                            <span style={{ fontWeight: 'bold' }}>{systemHealth.nas.percent}%</span>
+                          </div>
+                          <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden' }}>
+                            <div style={{ 
+                              width: `${systemHealth.nas.percent}%`, 
+                              height: '100%', 
+                              backgroundColor: systemHealth.nas.percent > 90 ? '#ef4444' : '#f59e0b' 
+                            }}></div>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                        Loading health data stats...
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -1836,95 +1917,7 @@ function App() {
                 </form>
               </div>
 
-              {/* System Health Monitor Widget */}
-              <div className="card" style={{ padding: '24px', gap: '16px' }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '8px' }}>
-                  🖥️ VPS & Storage Health
-                </h3>
-                
-                {systemHealth ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                    <div style={{ display: 'flex', gap: '24px', marginBottom: '8px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ 
-                          width: '12px', 
-                          height: '12px', 
-                          borderRadius: '50%', 
-                          backgroundColor: systemHealth.celery_online ? '#10b981' : '#ef4444',
-                          boxShadow: systemHealth.celery_online ? '0 0 8px #10b981' : '0 0 8px #ef4444'
-                        }}></span>
-                        <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Celery Worker: {systemHealth.celery_online ? 'ONLINE' : 'OFFLINE'}</span>
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ 
-                          width: '12px', 
-                          height: '12px', 
-                          borderRadius: '50%', 
-                          backgroundColor: systemHealth.nas.writable ? '#10b981' : '#ef4444',
-                          boxShadow: systemHealth.nas.writable ? '0 0 8px #10b981' : '0 0 8px #ef4444'
-                        }}></span>
-                        <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>NAS Storage: {systemHealth.nas.writable ? 'WRITABLE' : 'ERROR'}</span>
-                      </div>
-                    </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                        <span>CPU Load (1m avg)</span>
-                        <span style={{ fontWeight: 'bold' }}>{systemHealth.cpu_percent}%</span>
-                      </div>
-                      <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ 
-                          width: `${Math.min(systemHealth.cpu_percent, 100)}%`, 
-                          height: '100%', 
-                          backgroundColor: systemHealth.cpu_percent > 80 ? '#ef4444' : '#10b981' 
-                        }}></div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                        <span>VPS RAM Usage</span>
-                        <span style={{ fontWeight: 'bold' }}>
-                          {(systemHealth.memory.used_bytes / (1024*1024*1024)).toFixed(1)} GB / {(systemHealth.memory.total_bytes / (1024*1024*1024)).toFixed(1)} GB ({systemHealth.memory.percent}%)
-                        </span>
-                      </div>
-                      <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ 
-                          width: `${systemHealth.memory.percent}%`, 
-                          height: '100%', 
-                          backgroundColor: systemHealth.memory.percent > 85 ? '#ef4444' : '#4f46e5' 
-                        }}></div>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
-                        <span>NAS Storage Space</span>
-                        {systemHealth.nas.mounted ? (
-                          <span style={{ fontWeight: 'bold' }}>
-                            {(systemHealth.nas.used_bytes / (1024*1024*1024)).toFixed(1)} GB / {(systemHealth.nas.total_bytes / (1024*1024*1024)).toFixed(1)} GB ({systemHealth.nas.percent}%)
-                          </span>
-                        ) : (
-                          <span style={{ color: '#ef4444', fontWeight: 'bold' }}>UNMOUNTED</span>
-                        )}
-                      </div>
-                      <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ 
-                          width: `${systemHealth.nas.percent}%`, 
-                          height: '100%', 
-                          backgroundColor: systemHealth.nas.percent > 90 ? '#ef4444' : '#f59e0b' 
-                        }}></div>
-                      </div>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Mount Path: {systemHealth.nas.path}</span>
-                    </div>
-
-                  </div>
-                ) : (
-                  <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
-                    Loading health data stats...
-                  </div>
-                )}
-              </div>
 
               {/* GCP Projects & OAuth Manager Card */}
               <div className="card" style={{ padding: '24px', gap: '16px' }}>
