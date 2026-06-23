@@ -35,3 +35,11 @@ class ChannelCredentialsResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class OAuthStatusResponse(BaseModel):
+    connected: bool
+    gcp_project_id: Optional[str] = None
+    last_refreshed_at: Optional[datetime] = None
+    last_error: Optional[str] = None
+

@@ -189,6 +189,8 @@ function App() {
   const [gcpQuotaLimit, setGcpQuotaLimit] = useState(10000);
   const [oauthGcpProjectId, setOauthGcpProjectId] = useState('');
   const [oauthRefreshToken, setOauthRefreshToken] = useState('');
+  const [oauthStatus, setOauthStatus] = useState<{connected: boolean, gcp_project_id?: string, last_refreshed_at?: string, last_error?: string} | null>(null);
+  const [loadingOauthStatus, setLoadingOauthStatus] = useState(false);
   
   // UI Toast and loading indicators
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -322,11 +324,10 @@ function App() {
         const iframe = container?.querySelector('iframe');
         if (iframe) {
           observer.disconnect();
-          if (iframe.contentDocument?.readyState === 'complete') {
-            setRecaptchaReady(true);
-          } else {
-            iframe.addEventListener('load', () => setRecaptchaReady(true), { once: true });
-          }
+          // Avoid accessing contentDocument directly due to cross-origin policies
+          iframe.addEventListener('load', () => setRecaptchaReady(true), { once: true });
+          // Safe fallback in case onload already fired
+          setTimeout(() => setRecaptchaReady(true), 500);
         }
       });
       observer.observe(container, { childList: true, subtree: true });
@@ -356,11 +357,22 @@ function App() {
       fetchSettings();
       if (selectedSettingsChannelId) {
         fetchChannelProjects(selectedSettingsChannelId);
+        fetchOAuthStatus(selectedSettingsChannelId);
+        
+        // Auto-select active GCP project if already configured
+        const chan = channels.find(c => c.id === selectedSettingsChannelId);
+        if (chan && chan.gcp_project_id) {
+          setOauthGcpProjectId(chan.gcp_project_id);
+        } else {
+          setOauthGcpProjectId('');
+        }
       } else {
         setChannelProjects([]);
+        setOauthStatus(null);
+        setOauthGcpProjectId('');
       }
     }
-  }, [token, currentTab, selectedSettingsChannelId]);
+  }, [token, currentTab, selectedSettingsChannelId, channels]);
 
   // Load channel analytics when tab changes to analytics
   useEffect(() => {
@@ -392,6 +404,7 @@ function App() {
         setOauthRefreshToken('');
         if (selectedSettingsChannelId) {
           fetchChannelProjects(selectedSettingsChannelId);
+          fetchOAuthStatus(selectedSettingsChannelId);
         }
       } else if (data && data.type === 'OAUTH_FAILED') {
         triggerToast(`Google Authorization failed: ${data.error}`, 'error');
@@ -665,6 +678,46 @@ function App() {
     }
   };
 
+  const fetchOAuthStatus = async (chanId: number) => {
+    setLoadingOauthStatus(true);
+    try {
+      const res = await fetch(`${API_URL}/channels/${chanId}/oauth-status`, { headers: getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setOauthStatus(data);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoadingOauthStatus(false);
+    }
+  };
+
+  const handleDisconnectOAuth = async () => {
+    if (!selectedSettingsChannelId) return;
+    if (!confirm('Are you sure you want to disconnect Google OAuth credentials for this channel?')) return;
+    try {
+      const res = await fetch(`${API_URL}/channels/${selectedSettingsChannelId}/disconnect`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      if (res.ok) {
+        triggerToast('Channel disconnected successfully!');
+        fetchOAuthStatus(selectedSettingsChannelId);
+        // Refresh channels list to update gcp_project_id
+        const chanRes = await fetch(`${API_URL}/channels/`, { headers: getHeaders() });
+        if (chanRes.ok) {
+          const chanData = await chanRes.json();
+          setChannels(chanData);
+        }
+      } else {
+        triggerToast('Failed to disconnect channel.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error disconnecting channel.', 'error');
+    }
+  };
+
   const handleAddGcpProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSettingsChannelId) return;
@@ -736,6 +789,9 @@ function App() {
       if (res.ok) {
         triggerToast('OAuth Refresh Token saved successfully!');
         setOauthRefreshToken('');
+        // Refresh OAuth status and all data
+        fetchOAuthStatus(selectedSettingsChannelId);
+        refreshAllData();
       } else {
         const data = await res.json();
         triggerToast(data.detail || 'Failed to save OAuth token.', 'error');
@@ -962,11 +1018,19 @@ function App() {
   };
 
   const fetchAnalytics = async (channelId: number) => {
+    if (!channelId || isNaN(channelId)) {
+      setAnalyticsData(null);
+      return;
+    }
     setLoadingAnalytics(true);
     try {
       const res = await fetch(`${API_URL}/channels/${channelId}/analytics`, {
         headers: getHeaders(),
       });
+      if (res.status === 401) {
+        handleLogout();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
         setAnalyticsData(data);
@@ -1231,6 +1295,13 @@ function App() {
             {loading ? 'Logging in...' : 'Sign In'}
           </button>
         </form>
+        {/* Toast Notification alert inside login overlay */}
+        {toast && (
+          <div className={`toast toast-${toast.type}`}>
+            <span>{toast.type === 'success' ? '✅' : '❌'}</span>
+            <span>{toast.message}</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -2403,118 +2474,307 @@ function App() {
                       </form>
                     </div>
 
-                    {/* Channel OAuth Credentials Form */}
+                    {/* Channel OAuth Credentials Status & Form */}
                     <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
                       <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                        🔑 Register Channel OAuth Refresh Token
+                        🔑 Google OAuth Connection Status
                       </h4>
-                      <form onSubmit={handleSaveOAuthToken} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        <div className="form-group">
-                          <label htmlFor="oauth-gcp-project">Target GCP Project ID</label>
-                          <select
-                            id="oauth-gcp-project"
-                            className="form-input"
-                            value={oauthGcpProjectId}
-                            onChange={e => setOauthGcpProjectId(e.target.value)}
-                            required
-                          >
-                            <option value="">-- Select GCP Project --</option>
-                            {channelProjects.map(p => (
-                              <option key={p.id} value={p.project_id}>{p.project_name} ({p.project_id})</option>
-                            ))}
-                          </select>
-                        </div>
 
-                        {/* Option A: One-Click Google Auth */}
+                      {/* Display Status Header */}
+                      {loadingOauthStatus ? (
+                        <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.85rem' }}>
+                          🔄 Checking connection status...
+                        </div>
+                      ) : oauthStatus?.connected ? (
                         <div style={{
                           padding: '16px',
-                          background: 'rgba(255, 255, 255, 0.02)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: 'var(--radius-md)',
+                          background: 'rgba(52, 168, 83, 0.08)',
+                          border: '1px solid var(--success)',
+                          borderRadius: '8px',
                           display: 'flex',
                           flexDirection: 'column',
-                          gap: '10px'
+                          gap: '12px',
+                          marginBottom: '16px'
                         }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                            Option A: One-Click Google Authorization (Recommended)
-                          </span>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-                            Click the button below to authorize this channel using Google's secure popup window.
-                          </span>
-                          <button
-                            type="button"
-                            className="btn btn-primary"
-                            disabled={!oauthGcpProjectId}
-                            onClick={handleGoogleAuthFlow}
-                            style={{
-                              background: oauthGcpProjectId 
-                                ? 'linear-gradient(135deg, #4285f4 0%, #34a853 100%)' 
-                                : 'var(--bg-card)',
-                              border: oauthGcpProjectId ? 'none' : '1px solid var(--border-color)',
-                              alignSelf: 'flex-start',
-                              fontWeight: 600,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px',
-                              padding: '8px 16px',
-                              cursor: oauthGcpProjectId ? 'pointer' : 'not-allowed'
-                            }}
-                          >
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-                              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
-                              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
-                            </svg>
-                            Authorize Channel with Google
-                          </button>
-                          {!oauthGcpProjectId && (
-                            <span style={{ fontSize: '0.75rem', color: 'var(--danger)' }}>
-                              * Please select a target GCP project above first.
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ color: 'var(--success)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem' }}>
+                              🟢 Connected to YouTube OAuth
                             </span>
-                          )}
+                            <button
+                              type="button"
+                              className="btn btn-danger"
+                              style={{ padding: '6px 12px', fontSize: '0.75rem', fontWeight: 600 }}
+                              onClick={handleDisconnectOAuth}
+                            >
+                              🔌 Disconnect
+                            </button>
+                          </div>
+                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                            <strong>Active GCP Project:</strong> <code style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{oauthStatus.gcp_project_id}</code> <br />
+                            {oauthStatus.last_refreshed_at && (
+                              <span>
+                                <strong>Last Refreshed:</strong> {new Date(oauthStatus.last_refreshed_at).toLocaleString()} <br />
+                              </span>
+                            )}
+                            {oauthStatus.last_error && (
+                              <div style={{ color: 'var(--danger)', marginTop: '4px' }}>
+                                <strong>Last Error:</strong> {oauthStatus.last_error}
+                              </div>
+                            )}
+                          </div>
                         </div>
-
-                        {/* Option B: Manual token fallback */}
+                      ) : (
                         <div style={{
                           padding: '16px',
-                          background: 'rgba(255, 255, 255, 0.02)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: 'var(--radius-md)',
+                          background: 'rgba(234, 67, 53, 0.08)',
+                          border: '1px solid var(--danger)',
+                          borderRadius: '8px',
                           display: 'flex',
-                          flexDirection: 'column',
-                          gap: '12px'
+                          alignItems: 'center',
+                          gap: '8px',
+                          color: 'var(--danger)',
+                          fontWeight: 600,
+                          fontSize: '0.95rem',
+                          marginBottom: '16px'
                         }}>
-                          <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                            Option B: Manual Refresh Token Entry (Alternative)
-                          </span>
-                          <div className="form-group" style={{ margin: 0 }}>
-                            <label htmlFor="oauth-refresh-token" style={{ marginBottom: '6px' }}>OAuth Refresh Token</label>
-                            <input
-                              id="oauth-refresh-token"
-                              type="password"
-                              className="form-input"
-                              value={oauthRefreshToken}
-                              onChange={e => setOauthRefreshToken(e.target.value)}
-                              placeholder="Enter Google OAuth refresh token manually..."
-                            />
-                          </div>
-                          <button 
-                            type="submit" 
-                            className="btn btn-primary" 
-                            disabled={!oauthRefreshToken}
-                            style={{ 
-                              alignSelf: 'flex-start', 
-                              opacity: oauthRefreshToken ? 1 : 0.6,
-                              cursor: oauthRefreshToken ? 'pointer' : 'not-allowed'
-                            }}
-                          >
-                            💾 Save Channel Credentials
-                          </button>
+                          🔴 Not Connected (Please complete authorization below)
                         </div>
-                      </form>
-                    </div>
+                      )}
 
+                      {/* Render Credentials Forms */}
+                      {oauthStatus?.connected ? (
+                        <details style={{
+                          background: 'rgba(255, 255, 255, 0.01)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '8px',
+                          padding: '12px'
+                        }}>
+                          <summary style={{ cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+                            Change Connection / Reconnect Options
+                          </summary>
+                          <div style={{ marginTop: '16px' }}>
+                            <form onSubmit={handleSaveOAuthToken} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                              <div className="form-group">
+                                <label htmlFor="oauth-gcp-project">Target GCP Project ID</label>
+                                <select
+                                  id="oauth-gcp-project"
+                                  className="form-input"
+                                  value={oauthGcpProjectId}
+                                  onChange={e => setOauthGcpProjectId(e.target.value)}
+                                  required
+                                >
+                                  <option value="">-- Select GCP Project --</option>
+                                  {channelProjects.map(p => (
+                                    <option key={p.id} value={p.project_id}>{p.project_name} ({p.project_id})</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              {/* Option A: One-Click Google Auth */}
+                              <div style={{
+                                padding: '16px',
+                                background: 'rgba(255, 255, 255, 0.02)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '10px'
+                              }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                  Option A: One-Click Google Authorization (Recommended)
+                                </span>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                                  Click the button below to authorize this channel using Google's secure popup window.
+                                </span>
+                                <button
+                                  type="button"
+                                  className="btn btn-primary"
+                                  disabled={!oauthGcpProjectId}
+                                  onClick={handleGoogleAuthFlow}
+                                  style={{
+                                    background: oauthGcpProjectId 
+                                      ? 'linear-gradient(135deg, #4285f4 0%, #34a853 100%)' 
+                                      : 'var(--bg-card)',
+                                    border: oauthGcpProjectId ? 'none' : '1px solid var(--border-color)',
+                                    alignSelf: 'flex-start',
+                                    fontWeight: 600,
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    padding: '8px 16px',
+                                    cursor: oauthGcpProjectId ? 'pointer' : 'not-allowed'
+                                  }}
+                                >
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+                                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+                                  </svg>
+                                  Authorize Channel with Google
+                                </button>
+                                {!oauthGcpProjectId && (
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--danger)' }}>
+                                    * Please select a target GCP project above first.
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Option B: Manual token fallback */}
+                              <div style={{
+                                padding: '16px',
+                                background: 'rgba(255, 255, 255, 0.02)',
+                                border: '1px solid var(--border-color)',
+                                borderRadius: 'var(--radius-md)',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '12px'
+                              }}>
+                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                  Option B: Manual Refresh Token Entry (Alternative)
+                                </span>
+                                <div className="form-group" style={{ margin: 0 }}>
+                                  <label htmlFor="oauth-refresh-token" style={{ marginBottom: '6px' }}>OAuth Refresh Token</label>
+                                  <input
+                                    id="oauth-refresh-token"
+                                    type="password"
+                                    className="form-input"
+                                    value={oauthRefreshToken}
+                                    onChange={e => setOauthRefreshToken(e.target.value)}
+                                    placeholder="Enter Google OAuth refresh token manually..."
+                                  />
+                                </div>
+                                <button 
+                                  type="submit" 
+                                  className="btn btn-primary" 
+                                  disabled={!oauthRefreshToken}
+                                  style={{ 
+                                    alignSelf: 'flex-start', 
+                                    opacity: oauthRefreshToken ? 1 : 0.6,
+                                    cursor: oauthRefreshToken ? 'pointer' : 'not-allowed'
+                                  }}
+                                >
+                                  💾 Save Channel Credentials
+                                </button>
+                              </div>
+                            </form>
+                          </div>
+                        </details>
+                      ) : (
+                        <div style={{
+                          background: 'rgba(255, 255, 255, 0.01)',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: '8px',
+                          padding: '16px'
+                        }}>
+                          <form onSubmit={handleSaveOAuthToken} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                            <div className="form-group">
+                              <label htmlFor="oauth-gcp-project">Target GCP Project ID</label>
+                              <select
+                                id="oauth-gcp-project"
+                                className="form-input"
+                                value={oauthGcpProjectId}
+                                onChange={e => setOauthGcpProjectId(e.target.value)}
+                                required
+                              >
+                                <option value="">-- Select GCP Project --</option>
+                                {channelProjects.map(p => (
+                                  <option key={p.id} value={p.project_id}>{p.project_name} ({p.project_id})</option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {/* Option A: One-Click Google Auth */}
+                            <div style={{
+                              padding: '16px',
+                              background: 'rgba(255, 255, 255, 0.02)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: 'var(--radius-md)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '10px'
+                            }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                Option A: One-Click Google Authorization (Recommended)
+                              </span>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                                Click the button below to authorize this channel using Google's secure popup window.
+                              </span>
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                disabled={!oauthGcpProjectId}
+                                onClick={handleGoogleAuthFlow}
+                                style={{
+                                  background: oauthGcpProjectId 
+                                    ? 'linear-gradient(135deg, #4285f4 0%, #34a853 100%)' 
+                                    : 'var(--bg-card)',
+                                  border: oauthGcpProjectId ? 'none' : '1px solid var(--border-color)',
+                                  alignSelf: 'flex-start',
+                                  fontWeight: 600,
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '8px',
+                                  padding: '8px 16px',
+                                  cursor: oauthGcpProjectId ? 'pointer' : 'not-allowed'
+                                }}
+                              >
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
+                                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
+                                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
+                                </svg>
+                                Authorize Channel with Google
+                              </button>
+                              {!oauthGcpProjectId && (
+                                <span style={{ fontSize: '0.75rem', color: 'var(--danger)' }}>
+                                  * Please select a target GCP project above first.
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Option B: Manual token fallback */}
+                            <div style={{
+                              padding: '16px',
+                              background: 'rgba(255, 255, 255, 0.02)',
+                              border: '1px solid var(--border-color)',
+                              borderRadius: 'var(--radius-md)',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '12px'
+                            }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
+                                Option B: Manual Refresh Token Entry (Alternative)
+                              </span>
+                              <div className="form-group" style={{ margin: 0 }}>
+                                <label htmlFor="oauth-refresh-token" style={{ marginBottom: '6px' }}>OAuth Refresh Token</label>
+                                <input
+                                  id="oauth-refresh-token"
+                                  type="password"
+                                  className="form-input"
+                                  value={oauthRefreshToken}
+                                  onChange={e => setOauthRefreshToken(e.target.value)}
+                                  placeholder="Enter Google OAuth refresh token manually..."
+                                />
+                              </div>
+                              <button 
+                                type="submit" 
+                                className="btn btn-primary" 
+                                disabled={!oauthRefreshToken}
+                                style={{ 
+                                  alignSelf: 'flex-start', 
+                                  opacity: oauthRefreshToken ? 1 : 0.6,
+                                  cursor: oauthRefreshToken ? 'pointer' : 'not-allowed'
+                                }}
+                              >
+                                💾 Save Channel Credentials
+                              </button>
+                            </div>
+                          </form>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 ) : (
                   <div style={{ padding: '40px 20px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)' }}>

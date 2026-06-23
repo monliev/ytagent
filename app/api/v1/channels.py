@@ -17,7 +17,7 @@ from googleapiclient.discovery import build
 from app.api.deps import get_db, get_current_user
 from app.models import Channel, User, GCPProject, GCPProjectStatus, ChannelCredentials
 from app.schemas.channel import ChannelCreate, ChannelUpdate, ChannelResponse
-from app.schemas.gcp_project import GCPProjectCreate, GCPProjectResponse, ChannelCredentialsCreate, ChannelCredentialsResponse
+from app.schemas.gcp_project import GCPProjectCreate, GCPProjectResponse, ChannelCredentialsCreate, ChannelCredentialsResponse, OAuthStatusResponse
 from app.utils.credential_crypto import encrypt_token, decrypt_token
 
 logger = structlog.get_logger()
@@ -782,6 +782,72 @@ async def get_oauth_auth_url(
     auth_url = "https://accounts.google.com/o/oauth2/v2/auth?" + urllib.parse.urlencode(params)
     
     return {"auth_url": auth_url}
+
+
+@router.get("/{id}/oauth-status", response_model=OAuthStatusResponse)
+async def get_oauth_status(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> OAuthStatusResponse:
+    """Retrieve Google OAuth status for a specific channel."""
+    logger.info("api_get_oauth_status_called", channel_id=id, user_id=current_user.id)
+    stmt = select(Channel).where(Channel.id == id)
+    res = await db.execute(stmt)
+    channel = res.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+    
+    if not channel.gcp_project_id:
+        return OAuthStatusResponse(connected=False)
+        
+    stmt_creds = select(ChannelCredentials).where(
+        ChannelCredentials.channel_id == id,
+        ChannelCredentials.gcp_project_id == channel.gcp_project_id,
+        ChannelCredentials.is_active == True
+    )
+    res_creds = await db.execute(stmt_creds)
+    creds = res_creds.scalar_one_or_none()
+    
+    if not creds:
+        return OAuthStatusResponse(connected=False, gcp_project_id=channel.gcp_project_id)
+        
+    return OAuthStatusResponse(
+        connected=True,
+        gcp_project_id=channel.gcp_project_id,
+        last_refreshed_at=creds.last_refreshed_at,
+        last_error=creds.last_error
+    )
+
+
+@router.post("/{id}/disconnect")
+async def disconnect_channel_oauth(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Disconnect Google OAuth and clear active project for a channel."""
+    logger.info("api_disconnect_channel_called", channel_id=id, user_id=current_user.id)
+    stmt = select(Channel).where(Channel.id == id)
+    res = await db.execute(stmt)
+    channel = res.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+        
+    # Clear active gcp_project_id
+    channel.gcp_project_id = None
+    db.add(channel)
+    
+    # Deactivate or delete credentials
+    stmt_creds = select(ChannelCredentials).where(ChannelCredentials.channel_id == id)
+    res_creds = await db.execute(stmt_creds)
+    creds_list = res_creds.scalars().all()
+    for creds in creds_list:
+        await db.delete(creds)
+        
+    await db.commit()
+    logger.info("api_channel_disconnected", channel_id=id)
+    return {"detail": "Channel disconnected successfully"}
 
 
 

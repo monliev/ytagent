@@ -618,3 +618,90 @@ async def test_channel_analytics_endpoint(db_session):
         await db_check.commit()
 
 
+@pytest.mark.asyncio
+async def test_channel_oauth_status_and_disconnect(db_session):
+    from app.models import GCPProject, ChannelCredentials
+    from app.utils.credential_crypto import encrypt_token
+
+    # 1. Seed user, channel, gcp project, credentials
+    user = User(
+        telegram_id=987654321,
+        username="test_oauth_usr",
+        full_name="OAuth Admin",
+        role=UserRole.SUPERVISOR,
+        hashed_password=hash_password("pass123"),
+        is_active=True
+    )
+    channel = Channel(
+        name="Test_Ch_OAuth",
+        genre="relax",
+        folder_path="/mnt/nas/Test_Ch_OAuth",
+        preferred_time="09:00:00",
+        is_active=True,
+        gcp_project_id="test-proj-123"
+    )
+    db_session.add_all([user, channel])
+    await db_session.commit()
+    await db_session.refresh(user)
+    await db_session.refresh(channel)
+
+    gcp_proj = GCPProject(
+        channel_id=channel.id,
+        project_name="Test Project",
+        project_id="test-proj-123",
+        client_secret_json=encrypt_token(channel.id, '{"web":{"client_id":"cid","client_secret":"cs"}}'),
+        client_secret_path="",
+        quota_limit=10000,
+        status="active"
+    )
+    creds = ChannelCredentials(
+        channel_id=channel.id,
+        gcp_project_id="test-proj-123",
+        oauth_credentials_encrypted=encrypt_token(channel.id, "fake_access"),
+        oauth_refresh_token_encrypted=encrypt_token(channel.id, "fake_refresh"),
+        is_active=True
+    )
+    db_session.add_all([gcp_proj, creds])
+    await db_session.commit()
+
+    # 2. Test status endpoint when connected
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/login", json={
+            "username": "test_oauth_usr",
+            "password": "pass123"
+        })
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        status_res = await ac.get(f"/api/v1/channels/{channel.id}/oauth-status", headers=headers)
+        assert status_res.status_code == 200
+        status_data = status_res.json()
+        assert status_data["connected"] is True
+        assert status_data["gcp_project_id"] == "test-proj-123"
+
+        # 3. Test disconnect endpoint
+        disc_res = await ac.post(f"/api/v1/channels/{channel.id}/disconnect", headers=headers)
+        assert disc_res.status_code == 200
+        assert disc_res.json()["detail"] == "Channel disconnected successfully"
+
+        # 4. Verify disconnected status
+        status_res = await ac.get(f"/api/v1/channels/{channel.id}/oauth-status", headers=headers)
+        assert status_res.status_code == 200
+        status_data = status_res.json()
+        assert status_data["connected"] is False
+
+    # 5. Clean up db
+    async with AsyncSessionLocal() as db_check:
+        stmt_ch = select(Channel).where(Channel.id == channel.id)
+        ch_res = await db_check.execute(stmt_ch)
+        await db_check.delete(ch_res.scalar_one())
+        
+        stmt_usr = select(User).where(User.id == user.id)
+        usr_res = await db_check.execute(stmt_usr)
+        await db_check.delete(usr_res.scalar_one())
+        
+        await db_check.commit()
+
+
+
