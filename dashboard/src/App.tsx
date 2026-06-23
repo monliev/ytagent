@@ -7,6 +7,16 @@ const API_URL = import.meta.env.VITE_API_URL ||
     ? 'http://localhost:8000/api/v1' 
     : '/api/v1');
 
+const getRedirectUri = () => {
+  if (API_URL.startsWith('http://') || API_URL.startsWith('https://')) {
+    try {
+      const url = new URL(API_URL);
+      return `${url.origin}/api/v1/channels/oauth-callback`;
+    } catch (_) {}
+  }
+  return `${window.location.origin}/api/v1/channels/oauth-callback`;
+};
+
 // Types Definitions
 interface User {
   id: number;
@@ -361,7 +371,13 @@ function App() {
   // Listen for OAuth success/fail messages from callback popup
   useEffect(() => {
     const handleOAuthMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
+      const allowedOrigins = [window.location.origin];
+      if (API_URL.startsWith('http://') || API_URL.startsWith('https://')) {
+        try {
+          allowedOrigins.push(new URL(API_URL).origin);
+        } catch (_) {}
+      }
+      if (!allowedOrigins.includes(event.origin)) return;
       
       const data = event.data;
       if (data && data.type === 'OAUTH_SUCCESS') {
@@ -568,7 +584,7 @@ function App() {
     
     try {
       // Calculate dynamic redirect URI
-      const redirectUri = `${window.location.origin}/api/v1/channels/oauth-callback`;
+      const redirectUri = getRedirectUri();
       
       const res = await fetch(
         `${API_URL}/channels/${selectedSettingsChannelId}/oauth-auth-url?project_id=${encodeURIComponent(oauthGcpProjectId)}&redirect_uri=${encodeURIComponent(redirectUri)}`,
@@ -2038,7 +2054,7 @@ function App() {
                         <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Go to Credentials, click "Create Credentials" → "OAuth client ID" (Application type: <strong>Web application</strong>).</p>
                         <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Add the following to <strong>Authorized redirect URIs</strong> in GCP Console:</p>
                         <ul style={{ margin: '4px 0 4px 20px', padding: 0, color: 'var(--text-muted)' }}>
-                          <li>For One-Click Login (popup): <code>{`${window.location.origin}/api/v1/channels/oauth-callback`}</code></li>
+                          <li>For One-Click Login (popup): <code>{getRedirectUri()}</code></li>
                           <li>For Playground (manual): <code>https://developers.google.com/oauthplayground</code></li>
                         </ul>
                         <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Download the Client Secrets JSON file, open it, and paste the entire JSON string into the "Client Secrets JSON" field below.</p>
