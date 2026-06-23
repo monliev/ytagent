@@ -237,3 +237,122 @@ def _log(
     except Exception as e:
         logger.error("maintenance_log_insert_failed", error=str(e))
         db.rollback()
+
+
+@celery_app.task(name="app.tasks.maintenance.check_copyright_claims")
+def check_copyright_claims() -> dict:
+    """
+    Check recently uploaded videos on active channels for copyright claims/restrictions.
+    If claims are found, pause the channel's queue to protect it and alert the supervisor.
+    """
+    from app.core.config import settings
+    from app.services.upload_service_sync import UploadServiceSync
+    from app.utils.telegram_api import object_telegram_api
+    from app.models.channel import Channel
+    import asyncio
+    
+    upload_service = UploadServiceSync()
+    paused_channels = []
+    
+    with SessionLocal() as db:
+        # Get active channels
+        channels = db.query(Channel).filter(Channel.is_active == True).all()
+        
+        for channel in channels:
+            # Get last 5 uploaded videos
+            videos = (
+                db.query(Video)
+                .filter(
+                    Video.channel_id == channel.id,
+                    Video.status == VideoStatus.UPLOADED,
+                    Video.youtube_video_id != None
+                )
+                .order_by(Video.uploaded_at.desc())
+                .limit(5)
+                .all()
+            )
+            
+            if not videos:
+                continue
+                
+            try:
+                # Instantiate YouTube client for this channel
+                youtube = upload_service.get_youtube_client(db, channel.id, channel.gcp_project_id)
+                video_ids = [v.youtube_video_id for v in videos]
+                
+                # Fetch video status from YouTube API
+                response = youtube.videos().list(
+                    part="contentDetails,status",
+                    id=",".join(video_ids)
+                ).execute()
+                
+                items = response.get("items", [])
+                for item in items:
+                    vid_id = item.get("id")
+                    status_info = item.get("status", {})
+                    content_details = item.get("contentDetails", {})
+                    
+                    has_claim = False
+                    reason = ""
+                    
+                    # Check for region restrictions
+                    region_restriction = content_details.get("regionRestriction", {})
+                    if "blocked" in region_restriction:
+                        has_claim = True
+                        reason = "Blocked in countries: " + ", ".join(region_restriction["blocked"][:5])
+                        
+                    # Check rejection reason
+                    rejection_reason = status_info.get("rejectionReason")
+                    if rejection_reason in ["copyright", "termsOfUse", "trademark"]:
+                        has_claim = True
+                        reason = f"Rejected due to {rejection_reason}"
+                        
+                    if has_claim:
+                        # Pause channel
+                        channel.is_active = False
+                        db.add(channel)
+                        db.commit()
+                        
+                        # Find DB video record
+                        db_video = db.query(Video).filter(Video.youtube_video_id == vid_id).first()
+                        if db_video:
+                            db_video.notes = f"Copyright issue detected: {reason}"
+                            db.add(db_video)
+                            db.commit()
+                            
+                        # Log critical event
+                        _log(db, LogLevel.CRITICAL, "maintenance", "copyright_claim_detected",
+                             f"PAUSED CHANNEL '{channel.name}' due to copyright check on video {vid_id}: {reason}",
+                             video_id=db_video.id if db_video else None, channel_id=channel.id)
+                             
+                        # Send Telegram Notification
+                        alert_msg = (
+                            f"🚨 <b>CRITICAL: COPYRIGHT CLAIM DETECTED</b>\n\n"
+                            f"Channel: <b>{channel.name}</b> has been <b>PAUSED</b> (is_active = False).\n"
+                            f"Video ID: <code>{vid_id}</code>\n"
+                            f"Issue: <i>{reason}</i>\n\n"
+                            f"Please check YouTube Studio immediately."
+                        )
+                        try:
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                loop.create_task(object_telegram_api.send_message(
+                                    chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                                    text=alert_msg
+                                ))
+                            else:
+                                asyncio.run(object_telegram_api.send_message(
+                                    chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                                    text=alert_msg
+                                ))
+                        except Exception as tg_err:
+                            logger.error("failed_to_send_telegram_copyright_alert", error=str(tg_err))
+                            
+                        paused_channels.append(channel.name)
+                        break
+                        
+            except Exception as e:
+                logger.error("copyright_check_failed_for_channel", channel_id=channel.id, error=str(e))
+                
+    return {"status": "complete", "paused_channels": paused_channels, "count": len(paused_channels)}
+

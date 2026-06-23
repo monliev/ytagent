@@ -125,6 +125,15 @@ function App() {
   const [chanThumbStyle, setChanThumbStyle] = useState('');
   const [chanThumbPrompt, setChanThumbPrompt] = useState('');
 
+  // Secondary Features state
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [selectedAnalyticsChannelId, setSelectedAnalyticsChannelId] = useState<number | null>(null);
+  const [analyticsData, setAnalyticsData] = useState<any>(null);
+  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [systemHealth, setSystemHealth] = useState<any>(null);
+  const [selectedStagingVideoIds, setSelectedStagingVideoIds] = useState<number[]>([]);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
+
   // Logs filters & pagination
   const [logLevelFilter, setLogLevelFilter] = useState<string>('');
   const [logServiceFilter, setLogServiceFilter] = useState<string>('');
@@ -336,6 +345,41 @@ function App() {
       }
     }
   }, [token, currentTab, selectedSettingsChannelId]);
+
+  // Load channel analytics when tab changes to analytics
+  useEffect(() => {
+    if (token && currentTab === 'analytics') {
+      if (selectedAnalyticsChannelId) {
+        fetchAnalytics(selectedAnalyticsChannelId);
+      } else if (channels.length > 0) {
+        setSelectedAnalyticsChannelId(channels[0].id);
+        fetchAnalytics(channels[0].id);
+      }
+    }
+  }, [token, currentTab, selectedAnalyticsChannelId, channels]);
+
+  // Load system health periodically when dashboard tab is active or settings tab is active
+  useEffect(() => {
+    if (!token) return;
+    
+    const fetchHealth = async () => {
+      try {
+        const res = await fetch(`${API_URL}/system/health`, {
+          headers: getHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSystemHealth(data);
+        }
+      } catch (e) {
+        console.error("Failed to fetch system health", e);
+      }
+    };
+    
+    fetchHealth();
+    const interval = setInterval(fetchHealth, 15000); // refresh every 15s
+    return () => clearInterval(interval);
+  }, [token, currentTab]);
 
   const fetchSettings = async () => {
     try {
@@ -665,6 +709,89 @@ function App() {
       }
     } catch (e) {
       triggerToast('Network error retrying video.', 'error');
+    }
+  };
+
+  const fetchAnalytics = async (channelId: number) => {
+    setLoadingAnalytics(true);
+    try {
+      const res = await fetch(`${API_URL}/channels/${channelId}/analytics`, {
+        headers: getHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAnalyticsData(data);
+      } else {
+        triggerToast('Failed to fetch channel analytics.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Error fetching analytics.', 'error');
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  };
+
+  const toggleStagingVideoSelection = (videoId: number) => {
+    setSelectedStagingVideoIds(prev => 
+      prev.includes(videoId) 
+        ? prev.filter(id => id !== videoId) 
+        : [...prev, videoId]
+    );
+  };
+  
+  const toggleSelectAllStaging = () => {
+    if (selectedStagingVideoIds.length === stagingVideos.length) {
+      setSelectedStagingVideoIds([]);
+    } else {
+      setSelectedStagingVideoIds(stagingVideos.map(v => v.id));
+    }
+  };
+
+  const handleBulkApprove = async () => {
+    if (selectedStagingVideoIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to approve ${selectedStagingVideoIds.length} video(s)?`)) return;
+    setBulkProcessing(true);
+    try {
+      const res = await fetch(`${API_URL}/videos/bulk-approve`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ video_ids: selectedStagingVideoIds })
+      });
+      if (res.ok) {
+        triggerToast(`Bulk approved ${selectedStagingVideoIds.length} video(s) successfully!`);
+        setSelectedStagingVideoIds([]);
+        refreshAllData();
+      } else {
+        triggerToast('Failed to perform bulk approval.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error during bulk approval.', 'error');
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
+  const handleBulkDiscard = async () => {
+    if (selectedStagingVideoIds.length === 0) return;
+    if (!window.confirm(`Are you sure you want to discard ${selectedStagingVideoIds.length} video(s)? This will remove them from the pipeline.`)) return;
+    setBulkProcessing(true);
+    try {
+      const res = await fetch(`${API_URL}/videos/bulk-discard`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ video_ids: selectedStagingVideoIds })
+      });
+      if (res.ok) {
+        triggerToast(`Bulk discarded ${selectedStagingVideoIds.length} video(s) successfully!`);
+        setSelectedStagingVideoIds([]);
+        refreshAllData();
+      } else {
+        triggerToast('Failed to perform bulk discard.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error during bulk discard.', 'error');
+    } finally {
+      setBulkProcessing(false);
     }
   };
 
@@ -1080,15 +1207,36 @@ function App() {
         {/* Tab 2: Staging Area */}
         {currentTab === 'staging' && (
           <div>
-            <div className="page-header">
+            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div className="page-title-group">
                 <h1>Staging Area</h1>
                 <p>Review draft metadata and choose options for detected files</p>
               </div>
-              <button className="btn btn-secondary" onClick={refreshAllData}>
-                🔄 Refresh
-              </button>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                {stagingVideos.length > 0 && (
+                  <button className="btn btn-secondary" onClick={toggleSelectAllStaging}>
+                    {selectedStagingVideoIds.length === stagingVideos.length ? '☑️ Unselect All' : '⬜ Select All'}
+                  </button>
+                )}
+                <button className="btn btn-secondary" onClick={refreshAllData}>
+                  🔄 Refresh
+                </button>
+              </div>
             </div>
+
+            {selectedStagingVideoIds.length > 0 && (
+              <div className="card" style={{ padding: '16px', marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'rgba(79, 70, 229, 0.1)', border: '1px solid var(--primary)' }}>
+                <span style={{ fontWeight: 600 }}>{selectedStagingVideoIds.length} video(s) selected</span>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  <button className="btn btn-success" onClick={handleBulkApprove} disabled={bulkProcessing}>
+                    {bulkProcessing ? 'Processing...' : '✅ Bulk Approve'}
+                  </button>
+                  <button className="btn btn-danger" onClick={handleBulkDiscard} disabled={bulkProcessing}>
+                    {bulkProcessing ? 'Processing...' : '🗑️ Bulk Discard'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             {stagingVideos.length === 0 ? (
               <div className="spinner-container" style={{ padding: '80px 20px' }}>
@@ -1099,9 +1247,34 @@ function App() {
               <div className="grid">
                 {stagingVideos.map(video => (
                   <div key={video.id} className="card" id={`video-card-${video.id}`}>
-                    <div className="card-header">
-                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1e1b4b, #312e81)' }}>
-                        <span style={{ fontSize: '3rem' }}>🎬</span>
+                    <div className="card-header" style={{ position: 'relative' }}>
+                      <div 
+                        style={{ position: 'absolute', top: '10px', left: '10px', zIndex: 10, cursor: 'pointer', background: 'rgba(0,0,0,0.5)', padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center' }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input 
+                          type="checkbox" 
+                          checked={selectedStagingVideoIds.includes(video.id)} 
+                          onChange={() => toggleStagingVideoSelection(video.id)} 
+                          style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                        />
+                      </div>
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1e1b4b, #312e81)', overflow: 'hidden' }}>
+                        <img 
+                          src={`${API_URL}/videos/${video.id}/screenshot`} 
+                          alt="Screenshot" 
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                            const parent = e.currentTarget.parentElement;
+                            if (parent) {
+                              const fallback = document.createElement('span');
+                              fallback.style.fontSize = '3rem';
+                              fallback.innerText = '🎬';
+                              parent.appendChild(fallback);
+                            }
+                          }}
+                        />
                       </div>
                       <span className="card-badge badge-staging">STAGING</span>
                       {video.duration_seconds && (
@@ -1253,46 +1426,85 @@ function App() {
         {/* Tab 5: Analytics */}
         {currentTab === 'analytics' && (
           <div>
-            <div className="page-header">
+            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div className="page-title-group">
                 <h1>Performance Insights</h1>
-                <p>YouTube Channel subscribers growth, views tracking, and quota stats</p>
+                <p>YouTube Channel views tracking, engagement metrics, and daily trends</p>
+              </div>
+              <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Select Channel:</label>
+                <select 
+                  className="form-input" 
+                  style={{ width: '200px', marginTop: 0 }} 
+                  value={selectedAnalyticsChannelId || ''} 
+                  onChange={e => {
+                    const val = e.target.value ? Number(e.target.value) : null;
+                    setSelectedAnalyticsChannelId(val);
+                    if (val) fetchAnalytics(val);
+                  }}
+                >
+                  <option value="">-- Choose Channel --</option>
+                  {channels.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
               </div>
             </div>
 
-            {/* Analytics Stats Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '32px' }}>
-              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Subscribers Growth</span>
-                <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>+12,480</span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>▲ 12.3% since last week</span>
+            {loadingAnalytics ? (
+              <div className="spinner-container" style={{ padding: '80px 20px' }}>
+                <h2>Loading analytics reports...</h2>
               </div>
-              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Total Views</span>
-                <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>342,890</span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>▲ 8.1% since last week</span>
-              </div>
-              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>YouTube Quota Limit</span>
-                <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>12%</span>
-                <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden', marginTop: '4px' }}>
-                  <div style={{ width: '12%', height: '100%', backgroundColor: 'var(--success)' }}></div>
-                </div>
-              </div>
-            </div>
-
-            {/* Performance charts mockup */}
-            <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Weekly Views Trend</h3>
-              <div style={{ height: '200px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-color)' }}>
-                {[30, 45, 35, 60, 75, 50, 90].map((val, idx) => (
-                  <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '10%' }}>
-                    <div style={{ height: `${val}%`, width: '100%', background: 'var(--primary-gradient)', borderRadius: '4px 4px 0 0' }}></div>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '8px' }}>Day {idx+1}</span>
+            ) : analyticsData ? (
+              <>
+                {/* Analytics Stats Grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '32px' }}>
+                  <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Total Views (Last 30 Days)</span>
+                    <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>{analyticsData.total_views.toLocaleString()}</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>Source: {analyticsData.source === 'mock_fallback' ? 'Demo Fallback' : 'YouTube API'}</span>
                   </div>
-                ))}
+                  <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Avg View Duration</span>
+                    <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>{analyticsData.average_view_duration_minutes}m</span>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>Total engagement tracked</span>
+                  </div>
+                  <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Average CTR</span>
+                    <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>{analyticsData.average_ctr}%</span>
+                    <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden', marginTop: '4px' }}>
+                      <div style={{ width: `${Math.min(analyticsData.average_ctr * 15, 100)}%`, height: '100%', backgroundColor: 'var(--success)' }}></div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Performance charts */}
+                <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Daily Views Trend (30 Days)</h3>
+                  <div style={{ height: '200px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-color)', gap: '4px' }}>
+                    {analyticsData.daily_stats.map((val: any, idx: number) => {
+                      const maxViews = Math.max(...analyticsData.daily_stats.map((s: any) => s.views)) || 1;
+                      const heightPercent = Math.max((val.views / maxViews) * 100, 5);
+                      return (
+                        <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexGrow: 1 }} title={`${val.date}: ${val.views} views`}>
+                          <div style={{ height: `${heightPercent}%`, width: '100%', background: 'var(--primary-gradient)', borderRadius: '2px 2px 0 0' }}></div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)', fontSize: '0.75rem' }}>
+                    <span>{analyticsData.daily_stats[0]?.date}</span>
+                    <span>Views Timeline</span>
+                    <span>{analyticsData.daily_stats[analyticsData.daily_stats.length - 1]?.date}</span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="spinner-container" style={{ padding: '80px 20px' }}>
+                <h2>Select a channel to inspect stats</h2>
+                <p style={{ color: 'var(--text-secondary)' }}>Choose one of your registered channels from the dropdown menu.</p>
               </div>
-            </div>
+            )}
           </div>
         )}
 
@@ -1624,6 +1836,96 @@ function App() {
                 </form>
               </div>
 
+              {/* System Health Monitor Widget */}
+              <div className="card" style={{ padding: '24px', gap: '16px' }}>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '8px' }}>
+                  🖥️ VPS & Storage Health
+                </h3>
+                
+                {systemHealth ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                    <div style={{ display: 'flex', gap: '24px', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ 
+                          width: '12px', 
+                          height: '12px', 
+                          borderRadius: '50%', 
+                          backgroundColor: systemHealth.celery_online ? '#10b981' : '#ef4444',
+                          boxShadow: systemHealth.celery_online ? '0 0 8px #10b981' : '0 0 8px #ef4444'
+                        }}></span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Celery Worker: {systemHealth.celery_online ? 'ONLINE' : 'OFFLINE'}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ 
+                          width: '12px', 
+                          height: '12px', 
+                          borderRadius: '50%', 
+                          backgroundColor: systemHealth.nas.writable ? '#10b981' : '#ef4444',
+                          boxShadow: systemHealth.nas.writable ? '0 0 8px #10b981' : '0 0 8px #ef4444'
+                        }}></span>
+                        <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>NAS Storage: {systemHealth.nas.writable ? 'WRITABLE' : 'ERROR'}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span>CPU Load (1m avg)</span>
+                        <span style={{ fontWeight: 'bold' }}>{systemHealth.cpu_percent}%</span>
+                      </div>
+                      <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ 
+                          width: `${Math.min(systemHealth.cpu_percent, 100)}%`, 
+                          height: '100%', 
+                          backgroundColor: systemHealth.cpu_percent > 80 ? '#ef4444' : '#10b981' 
+                        }}></div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span>VPS RAM Usage</span>
+                        <span style={{ fontWeight: 'bold' }}>
+                          {(systemHealth.memory.used_bytes / (1024*1024*1024)).toFixed(1)} GB / {(systemHealth.memory.total_bytes / (1024*1024*1024)).toFixed(1)} GB ({systemHealth.memory.percent}%)
+                        </span>
+                      </div>
+                      <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ 
+                          width: `${systemHealth.memory.percent}%`, 
+                          height: '100%', 
+                          backgroundColor: systemHealth.memory.percent > 85 ? '#ef4444' : '#4f46e5' 
+                        }}></div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem' }}>
+                        <span>NAS Storage Space</span>
+                        {systemHealth.nas.mounted ? (
+                          <span style={{ fontWeight: 'bold' }}>
+                            {(systemHealth.nas.used_bytes / (1024*1024*1024)).toFixed(1)} GB / {(systemHealth.nas.total_bytes / (1024*1024*1024)).toFixed(1)} GB ({systemHealth.nas.percent}%)
+                          </span>
+                        ) : (
+                          <span style={{ color: '#ef4444', fontWeight: 'bold' }}>UNMOUNTED</span>
+                        )}
+                      </div>
+                      <div style={{ width: '100%', height: '8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ 
+                          width: `${systemHealth.nas.percent}%`, 
+                          height: '100%', 
+                          backgroundColor: systemHealth.nas.percent > 90 ? '#ef4444' : '#f59e0b' 
+                        }}></div>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Mount Path: {systemHealth.nas.path}</span>
+                    </div>
+
+                  </div>
+                ) : (
+                  <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                    Loading health data stats...
+                  </div>
+                )}
+              </div>
+
               {/* GCP Projects & OAuth Manager Card */}
               <div className="card" style={{ padding: '24px', gap: '16px' }}>
                 <h3 style={{ fontSize: '1.2rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '8px' }}>
@@ -1825,6 +2127,39 @@ function App() {
             </div>
             
             <div className="modal-body">
+              {/* Screenshot Frame Display */}
+              <div className="form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Video Screenshot Frame</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: '2px 6px', fontSize: '0.7rem' }}
+                    onClick={() => setPreviewImageUrl(`${API_URL}/videos/${selectedVideo.id}/screenshot`)}
+                  >
+                    🔍 View Screenshot
+                  </button>
+                </label>
+                <div style={{ width: '100%', height: '200px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', overflow: 'hidden', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+                  <img
+                    src={`${API_URL}/videos/${selectedVideo.id}/screenshot`}
+                    alt="Video Screenshot"
+                    style={{ width: '100%', height: '100%', objectFit: 'contain', cursor: 'pointer' }}
+                    onClick={() => setPreviewImageUrl(`${API_URL}/videos/${selectedVideo.id}/screenshot`)}
+                    onError={(e) => {
+                      e.currentTarget.style.display = 'none';
+                      const parent = e.currentTarget.parentElement;
+                      if (parent) {
+                        const fallback = document.createElement('span');
+                        fallback.style.fontSize = '3rem';
+                        fallback.innerText = '🎬';
+                        parent.appendChild(fallback);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
               {/* Thumbnail Draft Options */}
               <div className="form-group">
                 <label>Select Thumbnail Option</label>
@@ -1839,11 +2174,39 @@ function App() {
                         key={thumb.id}
                         className={`thumbnail-option ${thumb.is_selected ? 'selected' : ''}`}
                         onClick={() => handleSelectThumbnail(thumb.id)}
+                        style={{ height: '200px' }}
                       >
-                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #312e81, #4f46e5)' }}>
-                          <span style={{ fontSize: '2.5rem' }}>🖼️</span>
+                        <div style={{ width: '100%', height: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #312e81, #4f46e5)', position: 'relative', overflow: 'hidden' }}>
+                          <img 
+                            src={`${API_URL}/videos/thumbnails/${thumb.id}/image`} 
+                            alt={thumb.style_name} 
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              const parent = e.currentTarget.parentElement;
+                              if (parent) {
+                                const fallback = document.createElement('span');
+                                fallback.style.fontSize = '2.5rem';
+                                fallback.innerText = '🖼️';
+                                parent.appendChild(fallback);
+                              }
+                            }}
+                          />
                         </div>
-                        <div className="thumbnail-label">{thumb.style_name}</div>
+                        <div className="thumbnail-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
+                          <span>{thumb.style_name}</span>
+                          <button 
+                            type="button"
+                            className="btn btn-secondary" 
+                            style={{ padding: '2px 6px', fontSize: '0.7rem' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPreviewImageUrl(`${API_URL}/videos/thumbnails/${thumb.id}/image`);
+                            }}
+                          >
+                            🔍 Preview
+                          </button>
+                        </div>
                         {thumb.is_selected && <div className="thumbnail-check">✓</div>}
                       </div>
                     ))}
@@ -2141,6 +2504,29 @@ function App() {
               </div>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* Lightbox / Image Preview Modal */}
+      {previewImageUrl && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }} onClick={() => setPreviewImageUrl(null)}>
+          <div className="modal-content" style={{ maxWidth: '800px', padding: '10px', background: 'transparent', border: 'none', boxShadow: 'none' }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '10px' }}>
+              <button 
+                type="button" 
+                className="modal-close" 
+                style={{ fontSize: '2rem', color: '#fff', background: 'rgba(0,0,0,0.5)', width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }} 
+                onClick={() => setPreviewImageUrl(null)}
+              >
+                ×
+              </button>
+            </div>
+            <img 
+              src={previewImageUrl} 
+              alt="Preview" 
+              style={{ width: '100%', maxHeight: '80vh', objectFit: 'contain', borderRadius: '8px', boxShadow: '0 8px 32px rgba(0,0,0,0.5)' }} 
+            />
+          </div>
         </div>
       )}
     </div>

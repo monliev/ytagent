@@ -1,4 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import FileResponse
+from pydantic import BaseModel
+import os
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import structlog
@@ -430,4 +433,195 @@ async def retry_video(
     logger.info("celery_upload_task_dispatched_via_retry", video_id=video.id)
     
     return video
+
+
+@router.get("/thumbnails/{thumbnail_id}/image")
+async def get_thumbnail_image(
+    thumbnail_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Retrieve the actual binary image file for a thumbnail draft."""
+    stmt = select(ThumbnailDraft).where(ThumbnailDraft.id == thumbnail_id)
+    res = await db.execute(stmt)
+    draft = res.scalar_one_or_none()
+    if not draft:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thumbnail draft not found")
+        
+    if not draft.image_path or not os.path.exists(draft.image_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Thumbnail image file not found on disk")
+        
+    return FileResponse(draft.image_path)
+
+
+@router.get("/{id}/screenshot")
+async def get_video_screenshot(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Retrieve the actual video screenshot image file."""
+    stmt = select(Video).where(Video.id == id)
+    res = await db.execute(stmt)
+    video = res.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+        
+    if not video.screenshot_path or not os.path.exists(video.screenshot_path):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Screenshot file not found on disk")
+        
+    return FileResponse(video.screenshot_path)
+
+
+class BulkVideoAction(BaseModel):
+    video_ids: list[int]
+
+
+@router.post("/bulk-approve", status_code=status.HTTP_200_OK)
+async def bulk_approve_videos(
+    payload: BulkVideoAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Bulk approve staging videos and dispatch upload tasks."""
+    logger.info("api_bulk_approve_videos_called", count=len(payload.video_ids), user_id=current_user.id)
+    
+    results = {"success": [], "failed": []}
+    
+    for video_id in payload.video_ids:
+        lock_key = f"approve:lock:{video_id}"
+        is_locked = await redis_client.set(lock_key, "1", ex=300, nx=True)
+        if not is_locked:
+            results["failed"].append({"id": video_id, "detail": "Approval in progress"})
+            continue
+            
+        try:
+            stmt = select(Video).where(Video.id == video_id).with_for_update()
+            res = await db.execute(stmt)
+            video = res.scalar_one_or_none()
+            
+            if not video:
+                results["failed"].append({"id": video_id, "detail": "Video not found"})
+                continue
+                
+            if video.status != VideoStatus.STAGING:
+                if video.status in [VideoStatus.APPROVED, VideoStatus.QUEUED, VideoStatus.UPLOADING, VideoStatus.UPLOADED]:
+                    results["success"].append(video_id)
+                else:
+                    results["failed"].append({"id": video_id, "detail": f"Invalid status: {video.status}"})
+                continue
+                
+            # Get Channel
+            stmt_chan = select(Channel).where(Channel.id == video.channel_id)
+            res_chan = await db.execute(stmt_chan)
+            channel = res_chan.scalar_one()
+            
+            # Scheduling calculation
+            if not video.scheduled_time:
+                stmt_max = select(func.max(Video.scheduled_time)).where(
+                    Video.channel_id == video.channel_id,
+                    Video.scheduled_time >= datetime.now(),
+                    Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED, VideoStatus.UPLOADING, VideoStatus.UPLOADED])
+                )
+                res_max = await db.execute(stmt_max)
+                max_sched = res_max.scalar()
+                
+                pref_time = channel.preferred_time or time(10, 0, 0)
+                
+                if max_sched:
+                    scheduled_dt = datetime.combine(max_sched.date(), pref_time) + timedelta(days=1)
+                else:
+                    today_dt = datetime.combine(date.today(), pref_time)
+                    if today_dt > datetime.now():
+                        scheduled_dt = today_dt
+                    else:
+                        scheduled_dt = today_dt + timedelta(days=1)
+                        
+                video.scheduled_time = scheduled_dt
+                
+            # Mark latest metadata approved
+            stmt_meta = select(MetadataDraft).where(MetadataDraft.video_id == video_id).order_by(MetadataDraft.version_number.desc())
+            meta_res = await db.execute(stmt_meta)
+            latest_meta = meta_res.scalars().first()
+            if latest_meta:
+                latest_meta.is_approved = True
+                latest_meta.approved_by = current_user.id
+                latest_meta.approved_at = datetime.utcnow()
+                db.add(latest_meta)
+                
+            video.status = VideoStatus.APPROVED
+            db.add(video)
+            await db.commit()
+            
+            await _log_video_event(
+                db=db,
+                level=LogLevel.INFO,
+                service="approval",
+                event_type="video_approved_bulk",
+                message=f"Video approved via bulk action by user ID {current_user.id}",
+                video_id=video.id,
+                channel_id=video.channel_id,
+                user_id=current_user.id
+            )
+            
+            # Dispatch Celery task
+            upload_video_task.delay(video.id)
+            results["success"].append(video_id)
+            
+        except Exception as e:
+            results["failed"].append({"id": video_id, "detail": str(e)})
+            logger.error("bulk_approve_video_error", video_id=video_id, error=str(e))
+        finally:
+            await redis_client.delete(lock_key)
+            
+    return results
+
+
+@router.post("/bulk-discard", status_code=status.HTTP_200_OK)
+async def bulk_discard_videos(
+    payload: BulkVideoAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Bulk discard staging/detected/errored videos."""
+    logger.info("api_bulk_discard_videos_called", count=len(payload.video_ids), user_id=current_user.id)
+    
+    results = {"success": [], "failed": []}
+    
+    for video_id in payload.video_ids:
+        try:
+            stmt = select(Video).where(Video.id == video_id)
+            res = await db.execute(stmt)
+            video = res.scalar_one_or_none()
+            
+            if not video:
+                results["failed"].append({"id": video_id, "detail": "Video not found"})
+                continue
+                
+            if video.status not in [VideoStatus.STAGING, VideoStatus.DETECTED, VideoStatus.ERROR]:
+                results["failed"].append({"id": video_id, "detail": f"Cannot discard video in status: {video.status}"})
+                continue
+                
+            video.status = VideoStatus.DISCARDED
+            db.add(video)
+            await db.commit()
+            
+            await _log_video_event(
+                db=db,
+                level=LogLevel.WARNING,
+                service="approval",
+                event_type="video_discarded_bulk",
+                message=f"Video discarded via bulk action by user ID {current_user.id}",
+                video_id=video.id,
+                channel_id=video.channel_id,
+                user_id=current_user.id
+            )
+            results["success"].append(video_id)
+            
+        except Exception as e:
+            results["failed"].append({"id": video_id, "detail": str(e)})
+            
+    return results
+
+
 

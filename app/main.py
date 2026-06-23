@@ -9,6 +9,7 @@ from app.api.v1.channels import router as channels_router
 from app.api.v1.logs import router as logs_router
 from app.api.v1.telegram import router as telegram_router
 from app.api.v1.settings import router as settings_router
+from app.api.v1.system import router as system_router
 from app.utils.telegram_api import object_telegram_api
 from app.core.config import settings
 
@@ -60,6 +61,7 @@ app.include_router(logs_router, prefix="/api/v1/logs", tags=["logs"])
 app.include_router(telegram_router, prefix="/api/v1/telegram", tags=["telegram"])
 app.include_router(videos_router, prefix="/api/v1/videos", tags=["videos"])
 app.include_router(settings_router, prefix="/api/v1/settings", tags=["settings"])
+app.include_router(system_router, prefix="/api/v1/system", tags=["system"])
 
 
 @app.get("/health")

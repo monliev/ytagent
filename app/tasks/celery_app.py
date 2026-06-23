@@ -51,6 +51,11 @@ celery_app.conf.update(
             "task": "app.tasks.maintenance.rotate_system_logs",
             "schedule": crontab(hour=4, minute=0, day_of_week=0),
         },
+        # Every 6 hours: scan uploaded videos for copyright claims and auto-pause channel on alert
+        "check-copyright-claims": {
+            "task": "app.tasks.maintenance.check_copyright_claims",
+            "schedule": crontab(hour="*/6", minute=0),
+        },
     },
 )
 

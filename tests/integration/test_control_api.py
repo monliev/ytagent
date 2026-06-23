@@ -445,3 +445,160 @@ async def test_video_retry_endpoint(db_session):
         
         await db_check.commit()
 
+
+@pytest.mark.asyncio
+async def test_system_health_endpoint(db_session):
+    # Seed user for authentication
+    user = User(
+        telegram_id=987654321,
+        username="test_health_usr",
+        full_name="Health Supervisor",
+        role=UserRole.SUPERVISOR,
+        hashed_password=hash_password("pass123"),
+        is_active=True
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/login", json={
+            "username": "test_health_usr",
+            "password": "pass123"
+        })
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        response = await ac.get("/api/v1/system/health", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "cpu_percent" in data
+        assert "memory" in data
+        assert "nas" in data
+        assert "celery_online" in data
+
+
+@pytest.mark.asyncio
+async def test_bulk_video_actions(db_session):
+    # Seed user and channel
+    user = User(
+        telegram_id=987654321,
+        username="test_bulk_usr",
+        full_name="Bulk Supervisor",
+        role=UserRole.SUPERVISOR,
+        hashed_password=hash_password("pass123"),
+        is_active=True
+    )
+    channel = Channel(
+        name="Test_Ch_Bulk",
+        genre="ambient",
+        folder_path="/mnt/nas/Test_Ch_Bulk",
+        preferred_time="10:00:00",
+        is_active=True
+    )
+    db_session.add_all([user, channel])
+    await db_session.commit()
+    await db_session.refresh(user)
+    await db_session.refresh(channel)
+
+    video1 = Video(
+        channel_id=channel.id,
+        filename="video1.mp4",
+        file_path="/mnt/nas/Test_Ch_Bulk/video1.mp4",
+        file_size_bytes=1000000,
+        status=VideoStatus.STAGING,
+        youtube_privacy=YoutubePrivacy.PRIVATE
+    )
+    video2 = Video(
+        channel_id=channel.id,
+        filename="video2.mp4",
+        file_path="/mnt/nas/Test_Ch_Bulk/video2.mp4",
+        file_size_bytes=2000000,
+        status=VideoStatus.STAGING,
+        youtube_privacy=YoutubePrivacy.PRIVATE
+    )
+    db_session.add_all([video1, video2])
+    await db_session.commit()
+    await db_session.refresh(video1)
+    await db_session.refresh(video2)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/login", json={
+            "username": "test_bulk_usr",
+            "password": "pass123"
+        })
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # Test bulk approve
+        response = await ac.post("/api/v1/videos/bulk-approve", json={"video_ids": [video1.id, video2.id]}, headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert video1.id in data["success"]
+        assert video2.id in data["success"]
+
+    # Verify state in db
+    async with AsyncSessionLocal() as db_check:
+        v1 = await db_check.get(Video, video1.id)
+        v2 = await db_check.get(Video, video2.id)
+        assert v1.status == VideoStatus.APPROVED
+        assert v2.status == VideoStatus.APPROVED
+        
+        # Clean up
+        await db_check.delete(v1)
+        await db_check.delete(v2)
+        
+        stmt_ch = select(Channel).where(Channel.id == channel.id)
+        ch_res = await db_check.execute(stmt_ch)
+        await db_check.delete(ch_res.scalar_one())
+        
+        await db_check.commit()
+
+
+@pytest.mark.asyncio
+async def test_channel_analytics_endpoint(db_session):
+    user = User(
+        telegram_id=987654321,
+        username="test_analytics_usr",
+        full_name="Analytics Supervisor",
+        role=UserRole.SUPERVISOR,
+        hashed_password=hash_password("pass123"),
+        is_active=True
+    )
+    channel = Channel(
+        name="Test_Ch_Analytics",
+        genre="relax",
+        folder_path="/mnt/nas/Test_Ch_Analytics",
+        preferred_time="09:00:00",
+        is_active=True
+    )
+    db_session.add_all([user, channel])
+    await db_session.commit()
+    await db_session.refresh(user)
+    await db_session.refresh(channel)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/login", json={
+            "username": "test_analytics_usr",
+            "password": "pass123"
+        })
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        response = await ac.get(f"/api/v1/channels/{channel.id}/analytics", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert "total_views" in data
+        assert "daily_stats" in data
+        assert len(data["daily_stats"]) == 30
+        
+    async with AsyncSessionLocal() as db_check:
+        stmt_ch = select(Channel).where(Channel.id == channel.id)
+        ch_res = await db_check.execute(stmt_ch)
+        await db_check.delete(ch_res.scalar_one())
+        await db_check.commit()
+
+
