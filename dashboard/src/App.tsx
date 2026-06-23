@@ -276,25 +276,42 @@ function App() {
   useEffect(() => {
     if (!recaptchaSiteKey) return;
 
-    (window as any).onRecaptchaApiLoaded = () => {
-      if (recaptchaContainerRef.current && recaptchaWidgetId.current === null) {
-        recaptchaWidgetId.current = (window as any).grecaptcha.render(
-          recaptchaContainerRef.current,
-          {
-            sitekey: recaptchaSiteKey,
-            theme: 'dark',
-            callback: () => {
-              // User completed the checkbox - widget is fully visible
-            },
+    const renderWidget = () => {
+      if (!recaptchaContainerRef.current || recaptchaWidgetId.current !== null) return;
+
+      recaptchaWidgetId.current = (window as any).grecaptcha.render(
+        recaptchaContainerRef.current,
+        {
+          sitekey: recaptchaSiteKey,
+          theme: 'dark',
+          callback: () => {
+            // User completed the checkbox
+          },
+        }
+      );
+
+      // Wait for the iframe Google injects to fully load before revealing widget.
+      // This prevents the white-background flash while the iframe paints dark content.
+      const container = recaptchaContainerRef.current;
+      const observer = new MutationObserver(() => {
+        const iframe = container?.querySelector('iframe');
+        if (iframe) {
+          observer.disconnect();
+          if (iframe.contentDocument?.readyState === 'complete') {
+            setRecaptchaReady(true);
+          } else {
+            iframe.addEventListener('load', () => setRecaptchaReady(true), { once: true });
           }
-        );
-        setRecaptchaReady(true);
-      }
+        }
+      });
+      observer.observe(container, { childList: true, subtree: true });
     };
+
+    (window as any).onRecaptchaApiLoaded = renderWidget;
 
     // If the script already loaded before our callback was set, trigger manually
     if ((window as any).grecaptcha && (window as any).grecaptcha.render) {
-      (window as any).onRecaptchaApiLoaded();
+      renderWidget();
     }
 
     return () => {
