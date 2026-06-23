@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-# Install system deps (ffmpeg for video processing)
+# Install system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     curl \
@@ -8,12 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies first (cache layer)
-COPY ../requirements.txt .
+# Copy requirements from root context
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy only the app source code
+COPY app/ ./app/
+COPY scripts/ ./scripts/
 
 # Run Alembic migrations then start Uvicorn
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "cd /app && alembic -c app/alembic.ini upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
