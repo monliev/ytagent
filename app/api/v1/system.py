@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 import os
 import subprocess
 import structlog
@@ -148,8 +149,6 @@ class TelegramTestPayload(BaseModel):
     supervisor_telegram_id: Optional[int] = None
 
 
-# Import Optional for type hints if not already imported
-from typing import Optional
 
 @router.post("/test-telegram")
 async def test_telegram_connection(
