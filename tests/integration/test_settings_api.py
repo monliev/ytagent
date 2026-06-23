@@ -113,6 +113,28 @@ async def test_settings_workflow(db_session):
             setting = res.scalar_one()
             assert setting.value == "new_bot_token_1234"
 
+        # 5. Try updating settings using the masked values returned in step 3
+        masked_update_payload = {
+            "telegram_bot_token": data["telegram_bot_token"],
+            "supervisor_telegram_id": 987654321,
+            "recaptcha_site_key": "my_new_site_key",
+            "recaptcha_secret_key": data["recaptcha_secret_key"]
+        }
+        post_res_2 = await ac.post("/api/v1/settings/", json=masked_update_payload, headers=headers)
+        assert post_res_2.status_code == 200
+
+        # Verify direct DB values are unchanged
+        async with AsyncSessionLocal() as db_check2:
+            stmt = select(SystemSetting).where(SystemSetting.key == "telegram_bot_token")
+            res = await db_check2.execute(stmt)
+            setting_tg = res.scalar_one()
+            assert setting_tg.value == "new_bot_token_1234"
+
+            stmt = select(SystemSetting).where(SystemSetting.key == "recaptcha_secret_key")
+            res = await db_check2.execute(stmt)
+            setting_rec = res.scalar_one()
+            assert setting_rec.value == "my_new_secret_key"
+
 @pytest.mark.asyncio
 async def test_recaptcha_login_validation(db_session):
     password = "super_secret_password"

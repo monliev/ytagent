@@ -88,8 +88,9 @@ async def update_settings(
         if new_val is None:
             continue
         # Skip if placeholder mask was posted back
-        if isinstance(new_val, str) and set(new_val) <= {"*"}:
-            continue
+        if isinstance(new_val, str):
+            if set(new_val) <= {"*"} or (key in SENSITIVE_KEYS and new_val.startswith("****") and "*" in new_val):
+                continue
 
         stmt = select(SystemSetting).where(SystemSetting.key == key)
         res = await db.execute(stmt)
