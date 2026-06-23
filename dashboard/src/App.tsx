@@ -1,0 +1,1345 @@
+import React, { useState, useEffect } from 'react';
+import './App.css';
+
+// Base API URL
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+// Types Definitions
+interface User {
+  id: number;
+  telegram_id: number;
+  username: string | null;
+  full_name: string;
+  role: string;
+  is_active: boolean;
+}
+
+interface Video {
+  id: number;
+  channel_id: number;
+  filename: string;
+  file_path: string;
+  file_size_bytes: number;
+  duration_seconds: number | null;
+  resolution: string | null;
+  screenshot_path: string | null;
+  status: string;
+  youtube_video_id: string | null;
+  youtube_privacy: string;
+  scheduled_time: string | null;
+  uploaded_at: string | null;
+  retry_count: number;
+  last_error: string | null;
+  current_title: string | null;
+  current_description: string | null;
+  current_tags: string[] | null;
+  is_favorite: boolean;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface ThumbnailDraft {
+  id: number;
+  video_id: number;
+  image_path: string;
+  style_name: string;
+  prompt_used: string;
+  confidence_score: number | null;
+  is_selected: boolean;
+}
+
+interface Channel {
+  id: number;
+  name: string;
+  genre: string;
+  folder_path: string;
+  preferred_time: string;
+  is_active: boolean;
+  auto_approve: boolean;
+  made_for_kids: boolean;
+  preset_title_template: string | null;
+  preset_description_template: string | null;
+  preset_tags: string[] | null;
+  preset_social_links: any | null;
+  thumbnail_style_name: string | null;
+  thumbnail_style_prompt: string | null;
+  gcp_project_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface SystemLog {
+  id: number;
+  level: string;
+  service: string;
+  event_type: string;
+  message: string;
+  created_at: string;
+}
+
+function App() {
+  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  
+  // Navigation tabs: dashboard, staging, queue, schedule, analytics, channels, logs
+  const [currentTab, setCurrentTab] = useState<'dashboard' | 'staging' | 'queue' | 'schedule' | 'analytics' | 'channels' | 'logs'>('dashboard');
+  
+  // Channel Switcher (Context selector)
+  const [selectedChannelId, setSelectedChannelId] = useState<number | 'all'>('all');
+  const [isChannelSelectorOpen, setIsChannelSelectorOpen] = useState(false);
+
+  // Core Data State
+  const [videos, setVideos] = useState<Video[]>([]);
+  const [channels, setChannels] = useState<Channel[]>([]);
+  const [logs, setLogs] = useState<SystemLog[]>([]);
+
+  // Staging Detail Modal state
+  const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
+  const [thumbnailDrafts, setThumbnailDrafts] = useState<ThumbnailDraft[]>([]);
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editTags, setEditTags] = useState('');
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  // Channels settings state
+  const [isChannelModalOpen, setIsChannelModalOpen] = useState(false);
+  const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
+  
+  // Channel form state
+  const [chanName, setChanName] = useState('');
+  const [chanGenre, setChanGenre] = useState('');
+  const [chanFolder, setChanFolder] = useState('');
+  const [chanPrefTime, setChanPrefTime] = useState('10:00:00');
+  const [chanActive, setChanActive] = useState(true);
+  const [chanAutoApprove, setChanAutoApprove] = useState(false);
+  const [chanTitleTemp, setChanTitleTemp] = useState('');
+  const [chanDescTemp, setChanDescTemp] = useState('');
+  const [chanTags, setChanTags] = useState('');
+  const [chanThumbStyle, setChanThumbStyle] = useState('');
+  const [chanThumbPrompt, setChanThumbPrompt] = useState('');
+
+  // Logs filters & pagination
+  const [logLevelFilter, setLogLevelFilter] = useState<string>('');
+  const [logServiceFilter, setLogServiceFilter] = useState<string>('');
+  const [logPage, setLogPage] = useState(1);
+  const [logTotal, setLogTotal] = useState(0);
+
+  // Login form state
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  
+  // UI Toast and loading indicators
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const triggerToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const getHeaders = () => ({
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  });
+
+  // Fetch current user details
+  const fetchProfile = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch(`${API_URL}/auth/me`, { headers: getHeaders() });
+      if (res.status === 401) {
+        handleLogout();
+        return;
+      }
+      const data = await res.json();
+      setCurrentUser(data);
+    } catch (e) {
+      console.error(e);
+      triggerToast('Failed to load user profile.', 'error');
+    }
+  };
+
+  // Fetch all videos, channels, and logs
+  const refreshAllData = async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      // 1. Fetch Channels
+      const chanRes = await fetch(`${API_URL}/channels/`, { headers: getHeaders() });
+      if (chanRes.ok) {
+        const chanData = await chanRes.json();
+        setChannels(chanData);
+      }
+
+      // 2. Fetch all Videos
+      let videosUrl = `${API_URL}/videos/`;
+      if (selectedChannelId !== 'all') {
+        videosUrl += `?channel_id=${selectedChannelId}`;
+      }
+      const vidRes = await fetch(videosUrl, { headers: getHeaders() });
+      if (vidRes.ok) {
+        const vidData = await vidRes.json();
+        setVideos(vidData);
+      }
+
+      // 3. Fetch logs
+      let logsUrl = `${API_URL}/logs/?page=${logPage}&size=20`;
+      if (logLevelFilter) logsUrl += `&level=${logLevelFilter}`;
+      if (logServiceFilter) logsUrl += `&service=${logServiceFilter}`;
+      if (selectedChannelId !== 'all') logsUrl += `&channel_id=${selectedChannelId}`;
+      
+      const logRes = await fetch(logsUrl, { headers: getHeaders() });
+      if (logRes.ok) {
+        const logData = await logRes.json();
+        setLogs(logData.items);
+        setLogTotal(logData.total);
+      }
+    } catch (e) {
+      console.error(e);
+      triggerToast('Network error refreshing dashboard data.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (token) {
+      fetchProfile();
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (token) {
+      refreshAllData();
+    }
+  }, [token, selectedChannelId, logPage, logLevelFilter, logServiceFilter]);
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: loginUsername, password: loginPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        triggerToast(data.detail || 'Login failed.', 'error');
+        return;
+      }
+      localStorage.setItem('token', data.access_token);
+      setToken(data.access_token);
+      triggerToast('Login successful!');
+    } catch (e) {
+      triggerToast('Network error during login.', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('token');
+    setToken(null);
+    setCurrentUser(null);
+    triggerToast('Logged out successfully.');
+  };
+
+  // Video operations
+  const openEditModal = async (video: Video) => {
+    setSelectedVideo(video);
+    setEditTitle(video.current_title || '');
+    setEditDesc(video.current_description || '');
+    setEditTags((video.current_tags || []).join(', '));
+    setIsEditModalOpen(true);
+    setThumbnailDrafts([]);
+    
+    try {
+      const res = await fetch(`${API_URL}/videos/${video.id}/thumbnails`, { headers: getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setThumbnailDrafts(data);
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleSelectThumbnail = async (thumbId: number) => {
+    if (!selectedVideo) return;
+    try {
+      const res = await fetch(`${API_URL}/videos/${selectedVideo.id}/thumbnail`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ thumbnail_id: thumbId }),
+      });
+      if (res.ok) {
+        triggerToast('Thumbnail option selected!');
+        setThumbnailDrafts(prev => prev.map(t => ({
+          ...t,
+          is_selected: t.id === thumbId
+        })));
+        refreshAllData();
+      } else {
+        const err = await res.json();
+        triggerToast(err.detail || 'Failed to select thumbnail.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error selecting thumbnail.', 'error');
+    }
+  };
+
+  const handleSaveMetadata = async () => {
+    if (!selectedVideo) return;
+    try {
+      const res = await fetch(`${API_URL}/videos/${selectedVideo.id}/metadata`, {
+        method: 'PUT',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          title: editTitle,
+          description: editDesc,
+          tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast('Metadata changes saved successfully.');
+        setSelectedVideo(data);
+        refreshAllData();
+      } else {
+        triggerToast(data.detail || 'Failed to save metadata.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error saving metadata.', 'error');
+    }
+  };
+
+  const handleApproveVideo = async (videoId: number) => {
+    try {
+      const res = await fetch(`${API_URL}/videos/${videoId}/approve`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+      if (res.ok) {
+        triggerToast('Video approved and scheduled for upload!');
+        setIsEditModalOpen(false);
+        refreshAllData();
+      } else {
+        const data = await res.json();
+        triggerToast(data.detail || 'Failed to approve video.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error approving video.', 'error');
+    }
+  };
+
+  const handleDiscardVideo = async (videoId: number) => {
+    if (!window.confirm('Are you sure you want to discard this video? This removes it from the pipeline.')) return;
+    try {
+      const res = await fetch(`${API_URL}/videos/${videoId}/discard`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+      if (res.ok) {
+        triggerToast('Video discarded.');
+        setIsEditModalOpen(false);
+        refreshAllData();
+      } else {
+        const err = await res.json();
+        triggerToast(err.detail || 'Failed to discard video.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error discarding video.', 'error');
+    }
+  };
+
+  // Channels management
+  const openCreateChannelModal = () => {
+    setEditingChannel(null);
+    setChanName('');
+    setChanGenre('');
+    setChanFolder('');
+    setChanPrefTime('10:00:00');
+    setChanActive(true);
+    setChanAutoApprove(false);
+    setChanTitleTemp('');
+    setChanDescTemp('');
+    setChanTags('');
+    setChanThumbStyle('');
+    setChanThumbPrompt('');
+    setIsChannelModalOpen(true);
+  };
+
+  const openEditChannelModal = (channel: Channel) => {
+    setEditingChannel(channel);
+    setChanName(channel.name);
+    setChanGenre(channel.genre);
+    setChanFolder(channel.folder_path);
+    setChanPrefTime(channel.preferred_time);
+    setChanActive(channel.is_active);
+    setChanAutoApprove(channel.auto_approve);
+    setChanTitleTemp(channel.preset_title_template || '');
+    setChanDescTemp(channel.preset_description_template || '');
+    setChanTags((channel.preset_tags || []).join(', '));
+    setChanThumbStyle(channel.thumbnail_style_name || '');
+    setChanThumbPrompt(channel.thumbnail_style_prompt || '');
+    setIsChannelModalOpen(true);
+  };
+
+  const handleSaveChannel = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const payload = {
+      name: chanName,
+      genre: chanGenre,
+      folder_path: chanFolder,
+      preferred_time: chanPrefTime,
+      is_active: chanActive,
+      auto_approve: chanAutoApprove,
+      preset_title_template: chanTitleTemp || null,
+      preset_description_template: chanDescTemp || null,
+      preset_tags: chanTags.split(',').map(t => t.trim()).filter(Boolean),
+      thumbnail_style_name: chanThumbStyle || null,
+      thumbnail_style_prompt: chanThumbPrompt || null,
+    };
+
+    try {
+      let res;
+      if (editingChannel) {
+        res = await fetch(`${API_URL}/channels/${editingChannel.id}`, {
+          method: 'PUT',
+          headers: getHeaders(),
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch(`${API_URL}/channels/`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: JSON.stringify(payload),
+        });
+      }
+
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast(editingChannel ? 'Channel updated!' : 'Channel created successfully!');
+        setIsChannelModalOpen(false);
+        refreshAllData();
+      } else {
+        triggerToast(data.detail || 'Failed to save channel details.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error saving channel details.', 'error');
+    }
+  };
+
+  const handleDeleteChannel = async (id: number) => {
+    if (!window.confirm('Are you sure you want to delete this channel?')) return;
+    try {
+      const res = await fetch(`${API_URL}/channels/${id}`, {
+        method: 'DELETE',
+        headers: getHeaders(),
+      });
+      if (res.status === 204) {
+        triggerToast('Channel deleted successfully.');
+        refreshAllData();
+      } else {
+        const err = await res.json();
+        triggerToast(err.detail || 'Failed to delete channel.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error deleting channel.', 'error');
+    }
+  };
+
+  // Helper selectors
+  const getSelectedChannelName = () => {
+    if (selectedChannelId === 'all') return 'All Channels';
+    const match = channels.find(c => c.id === selectedChannelId);
+    return match ? match.name : 'Unknown Channel';
+  };
+
+  // Computed metrics from real data
+  const stagingVideos = videos.filter(v => v.status === 'staging');
+  const queuedVideos = videos.filter(v => ['approved', 'queued', 'uploading'].includes(v.status));
+  const completedVideos = videos.filter(v => v.status === 'uploaded');
+  const failedVideos = videos.filter(v => v.status === 'failed');
+
+  if (!token) {
+    return (
+      <div className="login-overlay">
+        <form className="login-card" onSubmit={handleLogin}>
+          <div className="login-logo">
+            <div className="login-logo-icon">📺</div>
+            <div className="login-logo-text">YTAgent Control Center</div>
+          </div>
+          
+          <div className="form-group">
+            <label htmlFor="login-username">Username or Telegram ID</label>
+            <input
+              id="login-username"
+              type="text"
+              className="form-input"
+              value={loginUsername}
+              onChange={e => setLoginUsername(e.target.value)}
+              placeholder="e.g. 123456789"
+              required
+            />
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="login-password">Password</label>
+            <input
+              id="login-password"
+              type="password"
+              className="form-input"
+              value={loginPassword}
+              onChange={e => setLoginPassword(e.target.value)}
+              placeholder="••••••••"
+              required
+            />
+          </div>
+
+          <button type="submit" className="btn btn-primary" style={{ width: '100%' }} disabled={loading}>
+            {loading ? 'Logging in...' : 'Sign In'}
+          </button>
+        </form>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-container">
+      {/* Sidebar Navigation */}
+      <aside className="sidebar">
+        <div className="logo-container">
+          <div className="logo-icon">📺</div>
+          <span className="logo-text">YTAgent</span>
+        </div>
+
+        {/* Channel Context Switcher Dropdown */}
+        <div style={{ position: 'relative', marginBottom: '24px' }}>
+          <button 
+            id="channel-selector-btn"
+            className="btn btn-secondary" 
+            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px' }}
+            onClick={() => setIsChannelSelectorOpen(!isChannelSelectorOpen)}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span>📻</span> {getSelectedChannelName()}
+            </span>
+            <span>▼</span>
+          </button>
+          
+          {isChannelSelectorOpen && (
+            <div style={{
+              position: 'absolute', top: '105%', left: 0, right: 0,
+              backgroundColor: '#1e293b', border: '1px solid var(--border-color)',
+              borderRadius: '8px', zIndex: 10, display: 'flex', flexDirection: 'column',
+              boxShadow: 'var(--shadow-lg)', overflow: 'hidden'
+            }}>
+              <div 
+                style={{ padding: '10px 14px', cursor: 'pointer', hover: { backgroundColor: '#334155' } }}
+                onClick={() => { setSelectedChannelId('all'); setIsChannelSelectorOpen(false); }}
+                className="channel-dropdown-item"
+              >
+                🌐 All Channels
+              </div>
+              {channels.map(c => (
+                <div 
+                  key={c.id}
+                  style={{ padding: '10px 14px', cursor: 'pointer' }}
+                  onClick={() => { setSelectedChannelId(c.id); setIsChannelSelectorOpen(false); }}
+                  className="channel-dropdown-item"
+                >
+                  🎵 {c.name}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        
+        <nav className="sidebar-nav">
+          <div 
+            id="nav-dashboard"
+            className={`nav-item ${currentTab === 'dashboard' ? 'active' : ''}`}
+            onClick={() => setCurrentTab('dashboard')}
+          >
+            <span>📊</span> Dashboard
+          </div>
+          <div 
+            id="nav-staging"
+            className={`nav-item ${currentTab === 'staging' ? 'active' : ''}`}
+            onClick={() => setCurrentTab('staging')}
+          >
+            <span>🎬</span> Staging Area {stagingVideos.length > 0 && <span style={{ marginLeft: 'auto', backgroundColor: 'var(--warning)', color: 'black', padding: '2px 6px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 'bold' }}>{stagingVideos.length}</span>}
+          </div>
+          <div 
+            id="nav-queue"
+            className={`nav-item ${currentTab === 'queue' ? 'active' : ''}`}
+            onClick={() => setCurrentTab('queue')}
+          >
+            <span>📁</span> Queue Manager {queuedVideos.length > 0 && <span style={{ marginLeft: 'auto', backgroundColor: 'var(--primary)', color: 'white', padding: '2px 6px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 'bold' }}>{queuedVideos.length}</span>}
+          </div>
+          <div 
+            id="nav-schedule"
+            className={`nav-item ${currentTab === 'schedule' ? 'active' : ''}`}
+            onClick={() => setCurrentTab('schedule')}
+          >
+            <span>📅</span> Schedule
+          </div>
+          <div 
+            id="nav-analytics"
+            className={`nav-item ${currentTab === 'analytics' ? 'active' : ''}`}
+            onClick={() => setCurrentTab('analytics')}
+          >
+            <span>📈</span> Analytics
+          </div>
+          <div 
+            id="nav-channels"
+            className={`nav-item ${currentTab === 'channels' ? 'active' : ''}`}
+            onClick={() => setCurrentTab('channels')}
+          >
+            <span>⚙️</span> Channel Settings
+          </div>
+          <div 
+            id="nav-logs"
+            className={`nav-item ${currentTab === 'logs' ? 'active' : ''}`}
+            onClick={() => setCurrentTab('logs')}
+          >
+            <span>📋</span> System Logs
+          </div>
+        </nav>
+
+        <div className="sidebar-footer">
+          <div className="user-profile">
+            <div className="avatar">
+              {currentUser?.full_name?.charAt(0) || 'U'}
+            </div>
+            <div className="user-info">
+              <span className="username">{currentUser?.full_name || 'Loading...'}</span>
+              <span className="user-role">{currentUser?.role || 'user'}</span>
+            </div>
+          </div>
+          <button className="btn-logout" onClick={handleLogout} title="Log out">
+            ❌
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="main-content">
+        
+        {/* Tab 1: Global Dashboard */}
+        {currentTab === 'dashboard' && (
+          <div>
+            <div className="page-header">
+              <div className="page-title-group">
+                <h1>Overview Dashboard</h1>
+                <p>Real-time analytics and active processing queues overview</p>
+              </div>
+              <button className="btn btn-secondary" onClick={refreshAllData}>
+                🔄 Refresh
+              </button>
+            </div>
+
+            {/* Metrics Row */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '32px' }}>
+              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Active Channels</span>
+                <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>{channels.length}</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>● All instances healthy</span>
+              </div>
+              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Staging Queue</span>
+                <span style={{ fontSize: '2.2rem', fontWeight: 800, color: stagingVideos.length > 0 ? 'var(--warning)' : 'inherit' }}>
+                  {stagingVideos.length}
+                </span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Awaiting approval</span>
+              </div>
+              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Scheduled / Active Queue</span>
+                <span style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--primary)' }}>{queuedVideos.length}</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Background tasks active</span>
+              </div>
+              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Total Completed Uploads</span>
+                <span style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--success)' }}>{completedVideos.length}</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>✓ Pipeline active</span>
+              </div>
+            </div>
+
+            {/* Content Splitting Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
+              {/* Left Column: Channels Grid Summary */}
+              <div>
+                <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>Channel Preset Presets</h2>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                  {channels.map(chan => {
+                    const chanVideos = videos.filter(v => v.channel_id === chan.id);
+                    const chanStaging = chanVideos.filter(v => v.status === 'staging').length;
+                    const chanCompleted = chanVideos.filter(v => v.status === 'uploaded').length;
+                    return (
+                      <div key={chan.id} className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>{chan.name}</h3>
+                          <span className={`log-level level-${chan.is_active ? 'INFO' : 'ERROR'}`}>{chan.is_active ? 'Active' : 'Disabled'}</span>
+                        </div>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                          <p><b>Watch folder:</b> {chan.folder_path}</p>
+                          <p><b>Preferred schedule:</b> {chan.preferred_time}</p>
+                        </div>
+                        <div style={{ display: 'flex', gap: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px', fontSize: '0.8rem' }}>
+                          <span>🎬 <b>{chanStaging}</b> Staging</span>
+                          <span>✓ <b>{chanCompleted}</b> Uploaded</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              
+              {/* Right Column: Activity log stream */}
+              <div>
+                <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>Recent Activity</h2>
+                <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '350px', overflowY: 'auto' }}>
+                  {logs.slice(0, 5).map(log => (
+                    <div key={log.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span className={`log-level level-${log.level}`} style={{ padding: '1px 4px', fontSize: '0.65rem' }}>{log.level}</span>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>{new Date(log.created_at).toLocaleTimeString()}</span>
+                      </div>
+                      <p style={{ color: 'var(--text-primary)' }}>{log.message}</p>
+                    </div>
+                  ))}
+                  {logs.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>No logs recorded yet</p>}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Staging Area */}
+        {currentTab === 'staging' && (
+          <div>
+            <div className="page-header">
+              <div className="page-title-group">
+                <h1>Staging Area</h1>
+                <p>Review draft metadata and choose options for detected files</p>
+              </div>
+              <button className="btn btn-secondary" onClick={refreshAllData}>
+                🔄 Refresh
+              </button>
+            </div>
+
+            {stagingVideos.length === 0 ? (
+              <div className="spinner-container" style={{ padding: '80px 20px' }}>
+                <h2>No videos awaiting approval</h2>
+                <p style={{ color: 'var(--text-secondary)', marginTop: '8px' }}>New NAS media files will appear here automatically for review.</p>
+              </div>
+            ) : (
+              <div className="grid">
+                {stagingVideos.map(video => (
+                  <div key={video.id} className="card" id={`video-card-${video.id}`}>
+                    <div className="card-header">
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #1e1b4b, #312e81)' }}>
+                        <span style={{ fontSize: '3rem' }}>🎬</span>
+                      </div>
+                      <span className="card-badge badge-staging">STAGING</span>
+                      {video.duration_seconds && (
+                        <span className="card-duration">
+                          {Math.floor(video.duration_seconds / 60)}m {video.duration_seconds % 60}s
+                        </span>
+                      )}
+                    </div>
+                    
+                    <div className="card-body">
+                      <h3 className="card-title">{video.current_title || video.filename}</h3>
+                      <div className="card-meta-info">
+                        <p><span className="meta-label">File:</span> {video.filename}</p>
+                        <p><span className="meta-label">Size:</span> {(video.file_size_bytes / (1024 * 1024)).toFixed(1)} MB</p>
+                      </div>
+                      <div className="card-actions">
+                        <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => openEditModal(video)}>
+                          ✏️ Review Draft
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Tab 3: Queue Manager */}
+        {currentTab === 'queue' && (
+          <div>
+            <div className="page-header">
+              <div className="page-title-group">
+                <h1>Background Queue Manager</h1>
+                <p>Track Celery worker sequential upload execution progress and error history</p>
+              </div>
+            </div>
+
+            {/* Active upload progress bar mockup */}
+            {videos.some(v => v.status === 'uploading') && (
+              <div className="card" style={{ padding: '20px', marginBottom: '24px', borderLeft: '4px solid var(--primary)' }}>
+                <h3 style={{ marginBottom: '8px' }}>⚡ Active YouTube Upload Task</h3>
+                {videos.filter(v => v.status === 'uploading').map(v => (
+                  <div key={v.id}>
+                    <p style={{ fontWeight: 600, fontSize: '0.95rem' }}>{v.current_title || v.filename}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '12px' }}>
+                      <div style={{ flexGrow: 1, height: '8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                        <div style={{ width: '65%', height: '100%', background: 'var(--primary-gradient)', borderRadius: '4px' }}></div>
+                      </div>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 'bold' }}>65%</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Video Title</th>
+                    <th>Size</th>
+                    <th>Privacy</th>
+                    <th>Queue Status</th>
+                    <th>Retries</th>
+                    <th>Error Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {videos.filter(v => v.status !== 'staging' && v.status !== 'detected' && v.status !== 'discarded').map(video => (
+                    <tr key={video.id}>
+                      <td>{video.id}</td>
+                      <td style={{ fontWeight: 600 }}>{video.current_title || video.filename}</td>
+                      <td>{(video.file_size_bytes / (1024*1024)).toFixed(1)} MB</td>
+                      <td style={{ textTransform: 'capitalize' }}>{video.youtube_privacy}</td>
+                      <td>
+                        <span className={`card-badge badge-${video.status}`}>
+                          {video.status}
+                        </span>
+                      </td>
+                      <td>{video.retry_count}</td>
+                      <td style={{ fontSize: '0.8rem', color: 'var(--danger)', maxWidth: '250px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={video.last_error || ''}>
+                        {video.last_error || '-'}
+                      </td>
+                    </tr>
+                  ))}
+                  {videos.filter(v => v.status !== 'staging' && v.status !== 'detected' && v.status !== 'discarded').length === 0 && (
+                    <tr>
+                      <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                        No videos currently in processing queue.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 4: Schedule */}
+        {currentTab === 'schedule' && (
+          <div>
+            <div className="page-header">
+              <div className="page-title-group">
+                <h1>Video Queue Schedule</h1>
+                <p>Chronological queue of upcoming automatically scheduled video uploads</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {videos.filter(v => v.scheduled_time && ['approved', 'queued'].includes(v.status)).sort((a,b) => new Date(a.scheduled_time!).getTime() - new Date(b.scheduled_time!).getTime()).map((v, i) => (
+                <div key={v.id} className="card" style={{ padding: '20px', display: 'flex', gap: '20px', alignItems: 'center' }}>
+                  <div style={{
+                    padding: '12px 20px', backgroundColor: 'var(--primary-light)', color: 'var(--primary)',
+                    borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px'
+                  }}>
+                    <span style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase' }}>Day {i+1}</span>
+                    <span style={{ fontSize: '1.2rem', fontWeight: 800 }}>{new Date(v.scheduled_time!).toLocaleDateString('en-US', { day: '2-digit', month: 'short' })}</span>
+                  </div>
+                  <div style={{ flexGrow: 1 }}>
+                    <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>{v.current_title || v.filename}</h3>
+                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      ⏰ Scheduled Time: <b>{new Date(v.scheduled_time!).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</b>
+                    </p>
+                  </div>
+                  <span className="card-badge badge-approved" style={{ alignSelf: 'center' }}>{v.status}</span>
+                </div>
+              ))}
+
+              {videos.filter(v => v.scheduled_time && ['approved', 'queued'].includes(v.status)).length === 0 && (
+                <div className="spinner-container" style={{ padding: '80px 20px' }}>
+                  <h2>No scheduled uploads</h2>
+                  <p style={{ color: 'var(--text-secondary)' }}>Approve staging drafts to schedule them for daily release.</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Tab 5: Analytics */}
+        {currentTab === 'analytics' && (
+          <div>
+            <div className="page-header">
+              <div className="page-title-group">
+                <h1>Performance Insights</h1>
+                <p>YouTube Channel subscribers growth, views tracking, and quota stats</p>
+              </div>
+            </div>
+
+            {/* Analytics Stats Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '32px' }}>
+              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Subscribers Growth</span>
+                <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>+12,480</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>▲ 12.3% since last week</span>
+              </div>
+              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Total Views</span>
+                <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>342,890</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>▲ 8.1% since last week</span>
+              </div>
+              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>YouTube Quota Limit</span>
+                <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>12%</span>
+                <div style={{ width: '100%', height: '6px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '3px', overflow: 'hidden', marginTop: '4px' }}>
+                  <div style={{ width: '12%', height: '100%', backgroundColor: 'var(--success)' }}></div>
+                </div>
+              </div>
+            </div>
+
+            {/* Performance charts mockup */}
+            <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Weekly Views Trend</h3>
+              <div style={{ height: '200px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border-color)' }}>
+                {[30, 45, 35, 60, 75, 50, 90].map((val, idx) => (
+                  <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '10%' }}>
+                    <div style={{ height: `${val}%`, width: '100%', background: 'var(--primary-gradient)', borderRadius: '4px 4px 0 0' }}></div>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '8px' }}>Day {idx+1}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 6: Channel Settings */}
+        {currentTab === 'channels' && (
+          <div>
+            <div className="page-header">
+              <div className="page-title-group">
+                <h1>Channel Settings</h1>
+                <p>Register and manage target YouTube channel credentials and automation defaults</p>
+              </div>
+              <button className="btn btn-primary" onClick={openCreateChannelModal}>
+                ➕ Create Channel
+              </button>
+            </div>
+
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Channel ID</th>
+                    <th>Name</th>
+                    <th>Genre</th>
+                    <th>Folder Path</th>
+                    <th>Upload Time</th>
+                    <th>Status</th>
+                    <th>Auto Approve</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {channels.map(channel => (
+                    <tr key={channel.id} id={`channel-row-${channel.id}`}>
+                      <td>{channel.id}</td>
+                      <td style={{ fontWeight: 600 }}>{channel.name}</td>
+                      <td><span className="tag">{channel.genre}</span></td>
+                      <td style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{channel.folder_path}</td>
+                      <td>{channel.preferred_time}</td>
+                      <td>
+                        <span className={`log-level level-${channel.is_active ? 'INFO' : 'ERROR'}`}>
+                          {channel.is_active ? 'Active' : 'Disabled'}
+                        </span>
+                      </td>
+                      <td>{channel.auto_approve ? '✅ Yes' : '❌ No'}</td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                          <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => openEditChannelModal(channel)}>
+                            ✏️ Edit
+                          </button>
+                          <button className="btn btn-danger" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => handleDeleteChannel(channel.id)}>
+                            🗑️ Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 7: System Logs */}
+        {currentTab === 'logs' && (
+          <div>
+            <div className="page-header">
+              <div className="page-title-group">
+                <h1>System Activity Logs</h1>
+                <p>Audit and track pipeline processing events, metadata drafts edits, and API commands</p>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', alignItems: 'center' }}>
+              <div className="form-group" style={{ minWidth: '150px' }}>
+                <select 
+                  className="form-input" 
+                  value={logLevelFilter} 
+                  onChange={e => { setLogLevelFilter(e.target.value); setLogPage(1); }}
+                >
+                  <option value="">All Log Levels</option>
+                  <option value="INFO">INFO</option>
+                  <option value="WARNING">WARNING</option>
+                  <option value="ERROR">ERROR</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+              </div>
+
+              <div className="form-group" style={{ flexGrow: 1 }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Filter by service name... (e.g. ingestion, upload)"
+                  value={logServiceFilter}
+                  onChange={e => { setLogServiceFilter(e.target.value); setLogPage(1); }}
+                />
+              </div>
+
+              <button className="btn btn-secondary" onClick={refreshAllData}>
+                🔄 Query
+              </button>
+            </div>
+
+            <div>
+              <div className="table-container">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Timestamp</th>
+                      <th>Level</th>
+                      <th>Service</th>
+                      <th>Event</th>
+                      <th>Message</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logs.map(log => (
+                      <tr key={log.id}>
+                        <td style={{ fontSize: '0.8rem', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>
+                          {new Date(log.created_at).toLocaleString()}
+                        </td>
+                        <td>
+                          <span className={`log-level level-${log.level}`}>
+                            {log.level}
+                          </span>
+                        </td>
+                        <td><span className="tag">{log.service}</span></td>
+                        <td style={{ fontWeight: 600, fontSize: '0.85rem' }}>{log.event_type}</td>
+                        <td style={{ fontSize: '0.85rem' }}>{log.message}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="pagination">
+                <span className="pagination-info">
+                  Showing {(logPage - 1) * 20 + 1} - {Math.min(logPage * 20, logTotal)} of {logTotal} events
+                </span>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={logPage === 1}
+                  onClick={() => setLogPage(p => Math.max(1, p - 1))}
+                >
+                  ◀ Prev
+                </button>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={logPage * 20 >= logTotal}
+                  onClick={() => setLogPage(p => p + 1)}
+                >
+                  Next ▶
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+
+      {/* Toast Notification alert */}
+      {toast && (
+        <div className={`toast toast-${toast.type}`}>
+          <span>{toast.type === 'success' ? '✅' : '❌'}</span>
+          <span>{toast.message}</span>
+        </div>
+      )}
+
+      {/* Edit Video Drawer / Modal */}
+      {isEditModalOpen && selectedVideo && (
+        <div className="modal-overlay" id="edit-video-modal">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Review Draft details — ID {selectedVideo.id}</h2>
+              <button type="button" className="modal-close" onClick={() => setIsEditModalOpen(false)}>×</button>
+            </div>
+            
+            <div className="modal-body">
+              {/* Thumbnail Draft Options */}
+              <div className="form-group">
+                <label>Select Thumbnail Option</label>
+                {thumbnailDrafts.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', background: 'rgba(0,0,0,0.1)', borderRadius: '8px' }}>
+                    Generating / loading thumbnail styles...
+                  </div>
+                ) : (
+                  <div className="thumbnail-select-grid">
+                    {thumbnailDrafts.map(thumb => (
+                      <div 
+                        key={thumb.id}
+                        className={`thumbnail-option ${thumb.is_selected ? 'selected' : ''}`}
+                        onClick={() => handleSelectThumbnail(thumb.id)}
+                      >
+                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #312e81, #4f46e5)' }}>
+                          <span style={{ fontSize: '2.5rem' }}>🖼️</span>
+                        </div>
+                        <div className="thumbnail-label">{thumb.style_name}</div>
+                        {thumb.is_selected && <div className="thumbnail-check">✓</div>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Metadata Fields */}
+              <div className="form-group">
+                <label htmlFor="edit-title">Title Draft</label>
+                <input 
+                  id="edit-title"
+                  type="text" 
+                  className="form-input" 
+                  value={editTitle} 
+                  onChange={e => setEditTitle(e.target.value)} 
+                  maxLength={100}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="edit-desc">Description Draft</label>
+                <textarea 
+                  id="edit-desc"
+                  className="form-textarea" 
+                  value={editDesc} 
+                  onChange={e => setEditDesc(e.target.value)}
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="edit-tags">Tags (Comma-separated)</label>
+                <input 
+                  id="edit-tags"
+                  type="text" 
+                  className="form-input" 
+                  value={editTags} 
+                  onChange={e => setEditTags(e.target.value)}
+                  placeholder="lofi, study, chill"
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                <button type="button" className="btn btn-secondary" onClick={handleSaveMetadata}>
+                  💾 Save Draft Changes
+                </button>
+                <button type="button" className="btn btn-success" onClick={() => handleApproveVideo(selectedVideo.id)}>
+                  ✅ Approve & Schedule Upload
+                </button>
+                <button type="button" className="btn btn-danger" style={{ marginLeft: 'auto' }} onClick={() => handleDiscardVideo(selectedVideo.id)}>
+                  🗑️ Discard Video
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create / Edit Channel Modal */}
+      {isChannelModalOpen && (
+        <div className="modal-overlay" id="channel-form-modal">
+          <form className="modal-content" onSubmit={handleSaveChannel}>
+            <div className="modal-header">
+              <h2>{editingChannel ? 'Modify Channel configuration' : 'Register New Channel'}</h2>
+              <button type="button" className="modal-close" onClick={() => setIsChannelModalOpen(false)}>×</button>
+            </div>
+            
+            <div className="modal-body">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label htmlFor="chan-name">Channel Name</label>
+                  <input
+                    id="chan-name"
+                    type="text"
+                    className="form-input"
+                    value={chanName}
+                    onChange={e => setChanName(e.target.value)}
+                    required
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="chan-genre">Genre</label>
+                  <input
+                    id="chan-genre"
+                    type="text"
+                    className="form-input"
+                    value={chanGenre}
+                    onChange={e => setChanGenre(e.target.value)}
+                    placeholder="e.g. lofi, tech, cooking"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="chan-folder">NAS Watch Folder Path</label>
+                <input
+                  id="chan-folder"
+                  type="text"
+                  className="form-input"
+                  value={chanFolder}
+                  onChange={e => setChanFolder(e.target.value)}
+                  required
+                />
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label htmlFor="chan-time">Preferred Daily Upload Time</label>
+                  <input
+                    id="chan-time"
+                    type="text"
+                    className="form-input"
+                    value={chanPrefTime}
+                    onChange={e => setChanPrefTime(e.target.value)}
+                    placeholder="HH:MM:SS"
+                    required
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginTop: '28px' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={chanActive}
+                      onChange={e => setChanActive(e.target.checked)}
+                    />
+                    Active
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={chanAutoApprove}
+                      onChange={e => setChanAutoApprove(e.target.checked)}
+                    />
+                    Auto Approve
+                  </label>
+                </div>
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />
+              <h3>AI Metadata generation templates</h3>
+
+              <div className="form-group">
+                <label htmlFor="chan-title-temp">Preset Title Template</label>
+                <input
+                  id="chan-title-temp"
+                  type="text"
+                  className="form-input"
+                  value={chanTitleTemp}
+                  onChange={e => setChanTitleTemp(e.target.value)}
+                  placeholder="e.g. {mood} lofi mix for {activity}"
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="chan-desc-temp">Preset Description Template</label>
+                <textarea
+                  id="chan-desc-temp"
+                  className="form-textarea"
+                  value={chanDescTemp}
+                  onChange={e => setChanDescTemp(e.target.value)}
+                  placeholder="Default video summary, links, and hashtags presets..."
+                />
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="chan-tags">Preset Tags (Comma-separated)</label>
+                <input
+                  id="chan-tags"
+                  type="text"
+                  className="form-input"
+                  value={chanTags}
+                  onChange={e => setChanTags(e.target.value)}
+                  placeholder="lofi, lofigirl, relaxing"
+                />
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />
+              <h3>AI Thumbnail presets</h3>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label htmlFor="chan-thumb-style">Thumbnail Style Name</label>
+                  <input
+                    id="chan-thumb-style"
+                    type="text"
+                    className="form-input"
+                    value={chanThumbStyle}
+                    onChange={e => setChanThumbStyle(e.target.value)}
+                    placeholder="e.g. fireplace_relax"
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="chan-thumb-prompt">AI Style Prompt</label>
+                  <input
+                    id="chan-thumb-prompt"
+                    type="text"
+                    className="form-input"
+                    value={chanThumbPrompt}
+                    onChange={e => setChanThumbPrompt(e.target.value)}
+                    placeholder="Detailed visual artwork prompt context..."
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
+                <button type="submit" className="btn btn-primary" style={{ flexGrow: 1 }}>
+                  💾 Save Channel Settings
+                </button>
+                <button type="button" className="btn btn-secondary" onClick={() => setIsChannelModalOpen(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default App;

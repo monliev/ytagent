@@ -1,0 +1,175 @@
+version: "3.8"
+
+services:
+  # Core Infrastructure
+  mysql:
+    image: mysql:8.0
+    container_name: ytagent-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ytagent
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql.cnf:/etc/mysql/conf.d/my.cnf:ro
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "127.0.0.1:3306:3306"  # Local only for security
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u${MYSQL_USER}", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ytagent-redis
+    volumes:
+      - redis_data:/data
+      - ./docker/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: ytagent-qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "127.0.0.1:6333:6333"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Application Services (To be activated/built in subsequent milestones)
+  api:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: ytagent-api
+    environment:
+      - DATABASE_URL=mysql+asyncmy://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
+      - SYNC_DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - SECRET_KEY=${SECRET_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - CF_AI_URL=${CF_AI_URL}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
+      - OMV_MOUNT_PATH=${OMV_MOUNT_PATH}
+      - TZ=${TZ}
+    volumes:
+      - ${OMV_MOUNT_PATH}:${OMV_MOUNT_PATH}:ro
+      - ./secrets:/secrets:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - app
+
+  worker:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.worker
+    container_name: ytagent-worker
+    environment:
+      - DATABASE_URL=mysql+asyncmy://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
+      - SYNC_DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
+      - REDIS_URL=redis://redis:6379/0
+      - QDRANT_URL=http://qdrant:6333
+      - SECRET_KEY=${SECRET_KEY}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - CF_AI_URL=${CF_AI_URL}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
+      - OMV_MOUNT_PATH=${OMV_MOUNT_PATH}
+      - TZ=${TZ}
+    volumes:
+      - ${OMV_MOUNT_PATH}:${OMV_MOUNT_PATH}:ro
+      - ./secrets:/secrets:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 2G
+    profiles:
+      - app
+
+  scheduler:
+    build:
+      context: ./app
+      dockerfile: Dockerfile.worker
+    container_name: ytagent-scheduler
+    command: celery -A tasks beat -l info
+    environment:
+      - DATABASE_URL=mysql+asyncmy://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
+      - SYNC_DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
+      - REDIS_URL=redis://redis:6379/0
+      - TZ=${TZ}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    profiles:
+      - app
+
+  filewatcher:
+    build:
+      context: ./services/filewatcher
+    container_name: ytagent-filewatcher
+    environment:
+      - API_URL=http://api:8000
+      - SCAN_INTERVAL=120
+      - OMV_MOUNT_PATH=${OMV_MOUNT_PATH}
+    volumes:
+      - ${OMV_MOUNT_PATH}:${OMV_MOUNT_PATH}:ro
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+    profiles:
+      - app
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: ytagent-dashboard
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      api:
+        condition: service_started
+    restart: unless-stopped
+    profiles:
+      - app
+
+volumes:
+  mysql_data:
+  redis_data:
+  qdrant_data:

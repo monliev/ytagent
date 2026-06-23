@@ -1,0 +1,13 @@
+[mysqld]
+# Optimizations for a system with 8GB RAM (giving 1-2GB to MySQL)
+innodb_buffer_pool_size = 1G
+innodb_log_file_size = 256M
+innodb_flush_log_at_trx_commit = 2
+innodb_flush_method = O_DIRECT
+
+# Connection limits
+max_connections = 100
+
+# Charset
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
