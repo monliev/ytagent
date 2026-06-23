@@ -103,3 +103,21 @@ async def get_public_settings(
     record = res.scalar_one_or_none()
     site_key = record.value if record else None
     return PublicSettingsResponse(recaptcha_site_key=site_key)
+
+@router.get("/watch-folders", response_model=list[str])
+async def get_watch_folders(
+    current_user: User = Depends(get_current_user)
+) -> list[str]:
+    """Retrieve subdirectories of the OMV NAS mount path."""
+    import os
+    logger.info("api_get_watch_folders_called", user_id=current_user.id)
+    path = settings.OMV_MOUNT_PATH
+    if not os.path.exists(path):
+        logger.warning("omv_mount_path_not_exists", path=path)
+        return []
+    try:
+        dirs = [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
+        return sorted(dirs)
+    except Exception as e:
+        logger.error("failed_to_list_watch_folders", error=str(e))
+        return []

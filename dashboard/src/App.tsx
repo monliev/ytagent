@@ -113,7 +113,10 @@ function App() {
   const [chanName, setChanName] = useState('');
   const [chanGenre, setChanGenre] = useState('');
   const [chanFolder, setChanFolder] = useState('');
-  const [chanPrefTime, setChanPrefTime] = useState('10:00:00');
+  const [chanHour, setChanHour] = useState('10');
+  const [chanMinute, setChanMinute] = useState('00');
+  const [chanSecond, setChanSecond] = useState('00');
+  const [watchFolders, setWatchFolders] = useState<string[]>([]);
   const [chanActive, setChanActive] = useState(true);
   const [chanAutoApprove, setChanAutoApprove] = useState(false);
   const [chanTitleTemp, setChanTitleTemp] = useState('');
@@ -291,6 +294,18 @@ function App() {
     } catch (e) {
       console.error(e);
       triggerToast('Failed to load system settings.', 'error');
+    }
+  };
+
+  const fetchWatchFolders = async () => {
+    try {
+      const res = await fetch(`${API_URL}/settings/watch-folders`, { headers: getHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        setWatchFolders(data);
+      }
+    } catch (e) {
+      console.error("Failed to fetch watch folders", e);
     }
   };
 
@@ -571,7 +586,9 @@ function App() {
     setChanName('');
     setChanGenre('');
     setChanFolder('');
-    setChanPrefTime('10:00:00');
+    setChanHour('10');
+    setChanMinute('00');
+    setChanSecond('00');
     setChanActive(true);
     setChanAutoApprove(false);
     setChanTitleTemp('');
@@ -579,6 +596,7 @@ function App() {
     setChanTags('');
     setChanThumbStyle('');
     setChanThumbPrompt('');
+    fetchWatchFolders();
     setIsChannelModalOpen(true);
   };
 
@@ -587,7 +605,10 @@ function App() {
     setChanName(channel.name);
     setChanGenre(channel.genre);
     setChanFolder(channel.folder_path);
-    setChanPrefTime(channel.preferred_time);
+    const parts = (channel.preferred_time || '10:00:00').split(':');
+    setChanHour(parts[0] || '10');
+    setChanMinute(parts[1] || '00');
+    setChanSecond(parts[2] || '00');
     setChanActive(channel.is_active);
     setChanAutoApprove(channel.auto_approve);
     setChanTitleTemp(channel.preset_title_template || '');
@@ -595,16 +616,18 @@ function App() {
     setChanTags((channel.preset_tags || []).join(', '));
     setChanThumbStyle(channel.thumbnail_style_name || '');
     setChanThumbPrompt(channel.thumbnail_style_prompt || '');
+    fetchWatchFolders();
     setIsChannelModalOpen(true);
   };
 
   const handleSaveChannel = async (e: React.FormEvent) => {
     e.preventDefault();
+    const padTime = (val: string) => val.padStart(2, '0');
     const payload = {
       name: chanName,
       genre: chanGenre,
       folder_path: chanFolder,
-      preferred_time: chanPrefTime,
+      preferred_time: `${padTime(chanHour)}:${padTime(chanMinute)}:${padTime(chanSecond)}`,
       is_active: chanActive,
       auto_approve: chanAutoApprove,
       preset_title_template: chanTitleTemp || null,
@@ -1712,42 +1735,92 @@ function App() {
                 </div>
                 <div className="form-group">
                   <label htmlFor="chan-genre">Genre</label>
-                  <input
+                  <select
                     id="chan-genre"
-                    type="text"
                     className="form-input"
                     value={chanGenre}
                     onChange={e => setChanGenre(e.target.value)}
-                    placeholder="e.g. lofi, tech, cooking"
                     required
-                  />
+                  >
+                    <option value="">-- Select YouTube Category --</option>
+                    <option value="Film & Animation">Film & Animation</option>
+                    <option value="Autos & Vehicles">Autos & Vehicles</option>
+                    <option value="Music">Music</option>
+                    <option value="Pets & Animals">Pets & Animals</option>
+                    <option value="Sports">Sports</option>
+                    <option value="Travel & Events">Travel & Events</option>
+                    <option value="Gaming">Gaming</option>
+                    <option value="People & Blogs">People & Blogs</option>
+                    <option value="Comedy">Comedy</option>
+                    <option value="Entertainment">Entertainment</option>
+                    <option value="News & Politics">News & Politics</option>
+                    <option value="Howto & Style">Howto & Style</option>
+                    <option value="Education">Education</option>
+                    <option value="Science & Technology">Science & Technology</option>
+                    <option value="Nonprofits & Activism">Nonprofits & Activism</option>
+                  </select>
                 </div>
               </div>
 
               <div className="form-group">
                 <label htmlFor="chan-folder">NAS Watch Folder Path</label>
-                <input
+                <select
                   id="chan-folder"
-                  type="text"
                   className="form-input"
                   value={chanFolder}
                   onChange={e => setChanFolder(e.target.value)}
                   required
-                />
+                >
+                  <option value="">-- Select Folder on NAS --</option>
+                  {watchFolders.map(folder => (
+                    <option key={folder} value={folder}>{folder}</option>
+                  ))}
+                  {chanFolder && !watchFolders.includes(chanFolder) && (
+                    <option value={chanFolder}>{chanFolder} (Custom/Legacy)</option>
+                  )}
+                </select>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div className="form-group">
-                  <label htmlFor="chan-time">Preferred Daily Upload Time</label>
-                  <input
-                    id="chan-time"
-                    type="text"
-                    className="form-input"
-                    value={chanPrefTime}
-                    onChange={e => setChanPrefTime(e.target.value)}
-                    placeholder="HH:MM:SS"
-                    required
-                  />
+                  <label>Preferred Daily Upload Time</label>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <select
+                      className="form-input"
+                      style={{ flex: 1 }}
+                      value={chanHour}
+                      onChange={e => setChanHour(e.target.value)}
+                    >
+                      {Array.from({ length: 24 }).map((_, i) => {
+                        const h = String(i).padStart(2, '0');
+                        return <option key={h} value={h}>{h}</option>;
+                      })}
+                    </select>
+                    <span>:</span>
+                    <select
+                      className="form-input"
+                      style={{ flex: 1 }}
+                      value={chanMinute}
+                      onChange={e => setChanMinute(e.target.value)}
+                    >
+                      {Array.from({ length: 60 }).map((_, i) => {
+                        const m = String(i).padStart(2, '0');
+                        return <option key={m} value={m}>{m}</option>;
+                      })}
+                    </select>
+                    <span>:</span>
+                    <select
+                      className="form-input"
+                      style={{ flex: 1 }}
+                      value={chanSecond}
+                      onChange={e => setChanSecond(e.target.value)}
+                    >
+                      {Array.from({ length: 60 }).map((_, i) => {
+                        const s = String(i).padStart(2, '0');
+                        return <option key={s} value={s}>{s}</option>;
+                      })}
+                    </select>
+                  </div>
                 </div>
                 <div style={{ display: 'flex', gap: '20px', alignItems: 'center', marginTop: '28px' }}>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>

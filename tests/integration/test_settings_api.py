@@ -108,6 +108,11 @@ async def test_settings_workflow(db_session):
         assert res_pub_updated.status_code == 200
         assert res_pub_updated.json() == {"recaptcha_site_key": "my_site_key"}
 
+        # Check watch folders retrieval
+        res_folders = await ac.get("/api/v1/settings/watch-folders", headers=headers)
+        assert res_folders.status_code == 200
+        assert isinstance(res_folders.json(), list)
+
 @pytest.mark.asyncio
 async def test_recaptcha_login_validation(db_session):
     # 1. Create a test user
