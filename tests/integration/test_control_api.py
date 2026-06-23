@@ -49,7 +49,23 @@ async def db_session():
 @pytest.fixture(scope="function", autouse=True)
 async def cleanup_db():
     """Cleans up test records from database tables to keep tests clean and isolated."""
+    async with AsyncSessionLocal() as db:
+        # Delete test channels and cascaded records
+        stmt_ch = select(Channel).where(Channel.name.like("Test_Ch_%"))
+        ch_res = await db.execute(stmt_ch)
+        for ch in ch_res.scalars().all():
+            await db.delete(ch)
+            
+        # Delete test users
+        stmt_usr = select(User).where(User.username.like("test_%"))
+        usr_res = await db.execute(stmt_usr)
+        for usr in usr_res.scalars().all():
+            await db.delete(usr)
+            
+        await db.commit()
+
     yield
+
     async with AsyncSessionLocal() as db:
         # Delete test channels and cascaded records
         stmt_ch = select(Channel).where(Channel.name.like("Test_Ch_%"))

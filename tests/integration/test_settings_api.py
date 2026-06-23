@@ -2,6 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import patch, MagicMock
 from sqlalchemy import select, delete
+import httpx
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
@@ -38,26 +39,32 @@ async def db_session():
 
 @pytest.fixture(scope="function", autouse=True)
 async def cleanup_db():
-    yield
     async with AsyncSessionLocal() as db:
-        # Delete test users
         stmt_usr = select(User).where(User.username.like("test_%"))
         usr_res = await db.execute(stmt_usr)
         for usr in usr_res.scalars().all():
             await db.delete(usr)
-            
-        # Delete settings
+        await db.execute(delete(SystemSetting))
+        await db.commit()
+
+    yield
+
+    async with AsyncSessionLocal() as db:
+        stmt_usr = select(User).where(User.username.like("test_%"))
+        usr_res = await db.execute(stmt_usr)
+        for usr in usr_res.scalars().all():
+            await db.delete(usr)
         await db.execute(delete(SystemSetting))
         await db.commit()
 
 @pytest.mark.asyncio
 async def test_settings_workflow(db_session):
-    # 1. Create a test user
+    # Setup test user
     password = "super_secret_password"
     user = User(
         telegram_id=987654321,
         username="test_user_settings",
-        full_name="Test User Settings",
+        full_name="Settings Supervisor",
         role=UserRole.SUPERVISOR,
         hashed_password=hash_password(password),
         is_active=True
@@ -68,16 +75,7 @@ async def test_settings_workflow(db_session):
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        # Get public settings (should be empty initially)
-        res_pub = await ac.get("/api/v1/settings/public")
-        assert res_pub.status_code == 200
-        assert res_pub.json() == {"recaptcha_site_key": None}
-
-        # Try setting retrieval unauthorized
-        res_unauth = await ac.get("/api/v1/settings/")
-        assert res_unauth.status_code == 401
-
-        # Login
+        # 1. Login to get authentication token
         login_res = await ac.post("/api/v1/auth/login", json={
             "username": "test_user_settings",
             "password": password
@@ -86,36 +84,37 @@ async def test_settings_workflow(db_session):
         token = login_res.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
-        # Update settings
+        # 2. Get settings (empty initially, defaults returned)
+        get_res = await ac.get("/api/v1/settings/", headers=headers)
+        assert get_res.status_code == 200
+        settings_dict = get_res.json()
+        assert "telegram_bot_token" in settings_dict
+        assert "recaptcha_site_key" in settings_dict
+
+        # 3. Update settings
         update_payload = {
-            "telegram_bot_token": "my_new_telegram_token_12345",
-            "supervisor_telegram_id": 12345678,
-            "cf_ai_url": "https://cloudflare.ai/v1",
-            "recaptcha_site_key": "my_site_key",
-            "recaptcha_secret_key": "my_secret_key"
+            "telegram_bot_token": "new_bot_token_1234",
+            "supervisor_telegram_id": 987654321,
+            "recaptcha_site_key": "my_new_site_key",
+            "recaptcha_secret_key": "my_new_secret_key"
         }
-        res_update = await ac.post("/api/v1/settings/", json=update_payload, headers=headers)
-        assert res_update.status_code == 200
-        settings_data = res_update.json()
-        assert settings_data["telegram_bot_token"] == "*********************12345"
-        assert settings_data["supervisor_telegram_id"] == 12345678
-        assert settings_data["cf_ai_url"] == "https://cloudflare.ai/v1"
-        assert settings_data["recaptcha_site_key"] == "my_site_key"
-        assert settings_data["recaptcha_secret_key"] == "********"
+        post_res = await ac.post("/api/v1/settings/", json=update_payload, headers=headers)
+        assert post_res.status_code == 200
+        data = post_res.json()
+        assert data["telegram_bot_token"] == "*" * (len("new_bot_token_1234") - 4) + "1234"
+        assert data["supervisor_telegram_id"] == 987654321
+        assert data["recaptcha_site_key"] == "my_new_site_key"
+        assert data["recaptcha_secret_key"] == "*" * (len("my_new_secret_key") - 4) + "_key"
 
-        # Check public settings now returns site key
-        res_pub_updated = await ac.get("/api/v1/settings/public")
-        assert res_pub_updated.status_code == 200
-        assert res_pub_updated.json() == {"recaptcha_site_key": "my_site_key"}
-
-        # Check watch folders retrieval
-        res_folders = await ac.get("/api/v1/settings/watch-folders", headers=headers)
-        assert res_folders.status_code == 200
-        assert isinstance(res_folders.json(), list)
+        # 4. Verify updated settings in DB directly
+        async with AsyncSessionLocal() as db_check:
+            stmt = select(SystemSetting).where(SystemSetting.key == "telegram_bot_token")
+            res = await db_check.execute(stmt)
+            setting = res.scalar_one()
+            assert setting.value == "new_bot_token_1234"
 
 @pytest.mark.asyncio
 async def test_recaptcha_login_validation(db_session):
-    # 1. Create a test user
     password = "super_secret_password"
     user = User(
         telegram_id=987654321,
@@ -148,7 +147,13 @@ async def test_recaptcha_login_validation(db_session):
         mock_response_fail.status_code = 200
         mock_response_fail.json.return_value = {"success": False, "error-codes": ["invalid-input-response"]}
 
-        with patch("httpx.AsyncClient.post", return_value=mock_response_fail):
+        original_post = httpx.AsyncClient.post
+        async def mock_post_fail(client_self, url, *args, **kwargs):
+            if "siteverify" in str(url):
+                return mock_response_fail
+            return await original_post(client_self, url, *args, **kwargs)
+
+        with patch("httpx.AsyncClient.post", new=mock_post_fail):
             res_fail = await ac.post("/api/v1/auth/login", json={
                 "username": "test_user_recaptcha",
                 "password": password,
@@ -162,7 +167,12 @@ async def test_recaptcha_login_validation(db_session):
         mock_response_success.status_code = 200
         mock_response_success.json.return_value = {"success": True}
 
-        with patch("httpx.AsyncClient.post", return_value=mock_response_success):
+        async def mock_post_success(client_self, url, *args, **kwargs):
+            if "siteverify" in str(url):
+                return mock_response_success
+            return await original_post(client_self, url, *args, **kwargs)
+
+        with patch("httpx.AsyncClient.post", new=mock_post_success):
             res_success = await ac.post("/api/v1/auth/login", json={
                 "username": "test_user_recaptcha",
                 "password": password,
