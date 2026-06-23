@@ -15,14 +15,21 @@ class Settings(BaseSettings):
     MYSQL_PORT: int = 3306
     MYSQL_DATABASE: str = "ytagent"
 
+    DATABASE_URL: str | None = None
+    SYNC_DATABASE_URL: str | None = None
+
     @property
     def database_url(self) -> str:
         """Async database connection URL for SQLAlchemy asyncmy driver."""
+        if self.DATABASE_URL:
+            return self.DATABASE_URL
         return f"mysql+asyncmy://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
 
     @property
     def sync_database_url(self) -> str:
         """Sync database connection URL for SQLAlchemy pymysql driver (Celery workers)."""
+        if self.SYNC_DATABASE_URL:
+            return self.SYNC_DATABASE_URL
         return f"mysql+pymysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DATABASE}"
 
     # Redis URL
