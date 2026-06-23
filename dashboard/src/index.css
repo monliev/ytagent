@@ -798,29 +798,17 @@ tr:hover td {
   to { transform: translateX(0); opacity: 1; }
 }
 
-/* Google reCAPTCHA blending style fix */
-.g-recaptcha,
-.g-recaptcha * {
-  border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  outline: none !important;
-  padding: 0 !important;
-  margin: 0 !important;
+
+/* Spin animation for loading placeholders */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
-.login-card iframe {
+/* reCAPTCHA explicit-render container: no extra chrome */
+#recaptcha-explicit-container > div,
+#recaptcha-explicit-container iframe {
   border: none !important;
-  background: transparent !important;
-  box-shadow: none !important;
-  outline: none !important;
-}
-
-.login-card div:has(iframe) {
-  border: none !important;
-  background: transparent !important;
-  padding: 0 !important;
-  margin: 0 !important;
   box-shadow: none !important;
   outline: none !important;
 }

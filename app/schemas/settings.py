@@ -7,6 +7,12 @@ class SystemSettingsBase(BaseModel):
     cf_ai_url: Optional[str] = Field(None, description="Cloudflare AI Worker URL")
     recaptcha_site_key: Optional[str] = Field(None, description="Google reCAPTCHA v2 Site Key")
     recaptcha_secret_key: Optional[str] = Field(None, description="Google reCAPTCHA v2 Secret Key")
+    # SFTP / NAS settings
+    sftp_host: Optional[str] = Field(None, description="SFTP / NAS Host IP or Hostname")
+    sftp_port: Optional[int] = Field(None, description="SFTP Port (default 22)")
+    sftp_user: Optional[str] = Field(None, description="SFTP Username")
+    sftp_password: Optional[str] = Field(None, description="SFTP Password")
+    sftp_base_path: Optional[str] = Field(None, description="Base path on SFTP server to list watch folders")
 
 class SystemSettingsResponse(SystemSettingsBase):
     pass

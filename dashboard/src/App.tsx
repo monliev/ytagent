@@ -144,7 +144,17 @@ function App() {
   const [settingsCfAiUrl, setSettingsCfAiUrl] = useState('');
   const [settingsRecaptchaSiteKey, setSettingsRecaptchaSiteKey] = useState('');
   const [settingsRecaptchaSecretKey, setSettingsRecaptchaSecretKey] = useState('');
-  
+  // SFTP / NAS settings
+  const [settingsSftpHost, setSettingsSftpHost] = useState('');
+  const [settingsSftpPort, setSettingsSftpPort] = useState('22');
+  const [settingsSftpUser, setSettingsSftpUser] = useState('');
+  const [settingsSftpPassword, setSettingsSftpPassword] = useState('');
+  const [settingsSftpBasePath, setSettingsSftpBasePath] = useState('/');
+  // reCAPTCHA explicit render state
+  const [recaptchaReady, setRecaptchaReady] = useState(false);
+  const recaptchaContainerRef = React.useRef<HTMLDivElement>(null);
+  const recaptchaWidgetId = React.useRef<number | null>(null);
+
   // GCP Projects & Credentials state
   const [selectedSettingsChannelId, setSelectedSettingsChannelId] = useState<number | ''>('');
   const [channelProjects, setChannelProjects] = useState<any[]>([]);
@@ -235,7 +245,7 @@ function App() {
     }
   }, [token]);
 
-  // Fetch public settings (reCAPTCHA site key) on mount
+  // Fetch public settings (reCAPTCHA site key) on mount — use explicit render
   useEffect(() => {
     const fetchPublicSettings = async () => {
       try {
@@ -244,11 +254,11 @@ function App() {
           const data = await res.json();
           if (data.recaptcha_site_key) {
             setRecaptchaSiteKey(data.recaptcha_site_key);
-            // Load reCAPTCHA script dynamically
+            // Use ?render=explicit so we control when the widget appears
             if (!document.getElementById('recaptcha-script')) {
               const script = document.createElement('script');
               script.id = 'recaptcha-script';
-              script.src = 'https://www.google.com/recaptcha/api.js';
+              script.src = 'https://www.google.com/recaptcha/api.js?render=explicit&onload=onRecaptchaApiLoaded';
               script.async = true;
               script.defer = true;
               document.body.appendChild(script);
@@ -261,6 +271,36 @@ function App() {
     };
     fetchPublicSettings();
   }, []);
+
+  // Set up global onRecaptchaApiLoaded callback for explicit reCAPTCHA rendering
+  useEffect(() => {
+    if (!recaptchaSiteKey) return;
+
+    (window as any).onRecaptchaApiLoaded = () => {
+      if (recaptchaContainerRef.current && recaptchaWidgetId.current === null) {
+        recaptchaWidgetId.current = (window as any).grecaptcha.render(
+          recaptchaContainerRef.current,
+          {
+            sitekey: recaptchaSiteKey,
+            theme: 'dark',
+            callback: () => {
+              // User completed the checkbox - widget is fully visible
+            },
+          }
+        );
+        setRecaptchaReady(true);
+      }
+    };
+
+    // If the script already loaded before our callback was set, trigger manually
+    if ((window as any).grecaptcha && (window as any).grecaptcha.render) {
+      (window as any).onRecaptchaApiLoaded();
+    }
+
+    return () => {
+      delete (window as any).onRecaptchaApiLoaded;
+    };
+  }, [recaptchaSiteKey]);
 
   useEffect(() => {
     if (token) {
@@ -290,6 +330,11 @@ function App() {
         setSettingsCfAiUrl(data.cf_ai_url || '');
         setSettingsRecaptchaSiteKey(data.recaptcha_site_key || '');
         setSettingsRecaptchaSecretKey(data.recaptcha_secret_key || '');
+        setSettingsSftpHost(data.sftp_host || '');
+        setSettingsSftpPort(data.sftp_port ? String(data.sftp_port) : '22');
+        setSettingsSftpUser(data.sftp_user || '');
+        setSettingsSftpPassword(data.sftp_password || '');
+        setSettingsSftpBasePath(data.sftp_base_path || '/');
       }
     } catch (e) {
       console.error(e);
@@ -320,7 +365,12 @@ function App() {
           supervisor_telegram_id: settingsSupervisorId ? parseInt(settingsSupervisorId) : null,
           cf_ai_url: settingsCfAiUrl,
           recaptcha_site_key: settingsRecaptchaSiteKey,
-          recaptcha_secret_key: settingsRecaptchaSecretKey
+          recaptcha_secret_key: settingsRecaptchaSecretKey,
+          sftp_host: settingsSftpHost,
+          sftp_port: settingsSftpPort ? parseInt(settingsSftpPort) : null,
+          sftp_user: settingsSftpUser,
+          sftp_password: settingsSftpPassword,
+          sftp_base_path: settingsSftpBasePath,
         })
       });
       if (res.ok) {
@@ -431,7 +481,9 @@ function App() {
     e.preventDefault();
     setLoading(true);
     try {
-      const recaptchaResponse = recaptchaSiteKey ? (window as any).grecaptcha?.getResponse() : null;
+      const recaptchaResponse = recaptchaSiteKey
+        ? (window as any).grecaptcha?.getResponse(recaptchaWidgetId.current ?? undefined)
+        : null;
       if (recaptchaSiteKey && !recaptchaResponse) {
         triggerToast('Please complete the reCAPTCHA verification.', 'error');
         setLoading(false);
@@ -451,7 +503,7 @@ function App() {
       if (!res.ok) {
         triggerToast(data.detail || 'Login failed.', 'error');
         if (recaptchaSiteKey) {
-          (window as any).grecaptcha?.reset();
+          (window as any).grecaptcha?.reset(recaptchaWidgetId.current ?? undefined);
         }
         return;
       }
@@ -733,8 +785,32 @@ function App() {
           </div>
 
           {recaptchaSiteKey && (
-            <div className="form-group" style={{ display: 'flex', justifyContent: 'center', marginBottom: '16px' }}>
-              <div className="g-recaptcha" data-sitekey={recaptchaSiteKey} data-theme="dark"></div>
+            <div className="form-group" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '16px', gap: '0' }}>
+              {/* Dark placeholder shown while reCAPTCHA iframe loads */}
+              {!recaptchaReady && (
+                <div style={{
+                  width: '304px',
+                  height: '78px',
+                  background: 'rgba(30,41,59,0.85)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '10px',
+                  color: 'var(--text-muted)',
+                  fontSize: '0.85rem',
+                }}>
+                  <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⟳</span>
+                  Loading verification...
+                </div>
+              )}
+              {/* reCAPTCHA explicit render container */}
+              <div
+                ref={recaptchaContainerRef}
+                id="recaptcha-explicit-container"
+                style={{ display: recaptchaReady ? 'block' : 'none' }}
+              />
             </div>
           )}
 
@@ -1397,7 +1473,7 @@ function App() {
                   </div>
 
                   {/* Google reCAPTCHA Section */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '4px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '20px' }}>
                     <h4 style={{ fontSize: '0.95rem', color: 'var(--primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
                       🛡️ Google reCAPTCHA v2 Login Security
                     </h4>
@@ -1424,6 +1500,76 @@ function App() {
                           placeholder="Private secret key"
                         />
                       </div>
+                    </div>
+                  </div>
+
+                  {/* SFTP / NAS Connection Section */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '4px' }}>
+                    <h4 style={{ fontSize: '0.95rem', color: 'var(--primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      🗂️ NAS / SFTP Connection
+                    </h4>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '-6px' }}>
+                      Configure SFTP to enable auto-scan of NAS folders when adding a channel. Leave blank to use local Docker volume mount.
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: '12px' }}>
+                      <div className="form-group">
+                        <label htmlFor="settings-sftp-host">SFTP Host / IP</label>
+                        <input
+                          id="settings-sftp-host"
+                          type="text"
+                          className="form-input"
+                          value={settingsSftpHost}
+                          onChange={e => setSettingsSftpHost(e.target.value)}
+                          placeholder="e.g. 192.168.1.100"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="settings-sftp-port">Port</label>
+                        <input
+                          id="settings-sftp-port"
+                          type="number"
+                          className="form-input"
+                          value={settingsSftpPort}
+                          onChange={e => setSettingsSftpPort(e.target.value)}
+                          placeholder="22"
+                          style={{ width: '80px' }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div className="form-group">
+                        <label htmlFor="settings-sftp-user">SFTP Username</label>
+                        <input
+                          id="settings-sftp-user"
+                          type="text"
+                          className="form-input"
+                          value={settingsSftpUser}
+                          onChange={e => setSettingsSftpUser(e.target.value)}
+                          placeholder="e.g. admin"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="settings-sftp-pass">SFTP Password</label>
+                        <input
+                          id="settings-sftp-pass"
+                          type="password"
+                          className="form-input"
+                          value={settingsSftpPassword}
+                          onChange={e => setSettingsSftpPassword(e.target.value)}
+                          placeholder="••••••••"
+                        />
+                      </div>
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="settings-sftp-base">Base Path (watch folder root)</label>
+                      <input
+                        id="settings-sftp-base"
+                        type="text"
+                        className="form-input"
+                        value={settingsSftpBasePath}
+                        onChange={e => setSettingsSftpBasePath(e.target.value)}
+                        placeholder="e.g. /volume1/youtube"
+                      />
                     </div>
                   </div>
 
@@ -1764,21 +1910,38 @@ function App() {
 
               <div className="form-group">
                 <label htmlFor="chan-folder">NAS Watch Folder Path</label>
-                <select
-                  id="chan-folder"
-                  className="form-input"
-                  value={chanFolder}
-                  onChange={e => setChanFolder(e.target.value)}
-                  required
-                >
-                  <option value="">-- Select Folder on NAS --</option>
-                  {watchFolders.map(folder => (
-                    <option key={folder} value={folder}>{folder}</option>
-                  ))}
-                  {chanFolder && !watchFolders.includes(chanFolder) && (
-                    <option value={chanFolder}>{chanFolder} (Custom/Legacy)</option>
-                  )}
-                </select>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <select
+                    id="chan-folder"
+                    className="form-input"
+                    value={chanFolder}
+                    onChange={e => setChanFolder(e.target.value)}
+                    required
+                    style={{ flex: 1 }}
+                  >
+                    <option value="">-- Select Folder on NAS --</option>
+                    {watchFolders.map(folder => (
+                      <option key={folder} value={folder}>{folder}</option>
+                    ))}
+                    {chanFolder && !watchFolders.includes(chanFolder) && (
+                      <option value={chanFolder}>{chanFolder} (Custom/Legacy)</option>
+                    )}
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={fetchWatchFolders}
+                    title="Refresh folder list"
+                    style={{ padding: '8px 12px', flexShrink: 0, fontSize: '1rem' }}
+                  >
+                    🔄
+                  </button>
+                </div>
+                {watchFolders.length === 0 && (
+                  <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    No folders found. Configure SFTP in Settings or ensure the NAS volume is mounted.
+                  </p>
+                )}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
