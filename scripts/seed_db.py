@@ -1,4 +1,12 @@
+import os
+import sys
 import asyncio
+
+# Setup path so script can import app modules
+this_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(this_dir)
+sys.path.insert(0, root_dir)
+
 from sqlalchemy import select
 from app.core.database import AsyncSessionLocal
 from app.models.user import User, UserRole
