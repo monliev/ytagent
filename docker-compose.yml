@@ -84,8 +84,6 @@ services:
       qdrant:
         condition: service_healthy
     restart: unless-stopped
-    profiles:
-      - app
 
   worker:
     build:
@@ -118,8 +116,6 @@ services:
         limits:
           cpus: '1'
           memory: 2G
-    profiles:
-      - app
 
   scheduler:
     build:
@@ -136,8 +132,6 @@ services:
       redis:
         condition: service_healthy
     restart: unless-stopped
-    profiles:
-      - app
 
   filewatcher:
     build:
@@ -153,8 +147,6 @@ services:
       api:
         condition: service_started
     restart: unless-stopped
-    profiles:
-      - filewatcher
 
   dashboard:
     build:
@@ -167,8 +159,6 @@ services:
       api:
         condition: service_started
     restart: unless-stopped
-    profiles:
-      - app
 
 volumes:
   mysql_data:
