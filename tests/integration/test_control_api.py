@@ -370,3 +370,78 @@ async def test_telegram_webhook_callback(db_session):
         await db_check.delete(ch_res.scalar_one())
         
         await db_check.commit()
+
+
+@pytest.mark.asyncio
+async def test_video_retry_endpoint(db_session):
+    # 1. Seed user, channel, and a FAILED video
+    user = User(
+        telegram_id=987654321,
+        username="test_retry_usr",
+        full_name="Retry Supervisor",
+        role=UserRole.SUPERVISOR,
+        hashed_password=hash_password("pass123"),
+        is_active=True
+    )
+    channel = Channel(
+        name="Test_Ch_Retry",
+        genre="relax",
+        folder_path="/mnt/nas/Test_Ch_Retry",
+        preferred_time="09:00:00",
+        is_active=True
+    )
+    db_session.add_all([user, channel])
+    await db_session.commit()
+    await db_session.refresh(user)
+    await db_session.refresh(channel)
+    
+    video = Video(
+        channel_id=channel.id,
+        filename="test_failed_video.mp4",
+        file_path="/mnt/nas/Test_Ch_Retry/test_failed_video.mp4",
+        file_size_bytes=500000,
+        status=VideoStatus.FAILED,
+        retry_count=3,
+        last_error="YouTube upload quota exceeded",
+        youtube_privacy=YoutubePrivacy.PRIVATE
+    )
+    db_session.add(video)
+    await db_session.commit()
+    await db_session.refresh(video)
+    
+    # Login to get auth token
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/login", json={
+            "username": "test_retry_usr",
+            "password": "pass123"
+        })
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        
+        # 2. Trigger retry
+        response = await ac.post(f"/api/v1/videos/{video.id}/retry", headers=headers)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "approved"
+        assert data["retry_count"] == 0
+        assert data["last_error"] is None
+        
+    # Verify the video state in database
+    async with AsyncSessionLocal() as db_check:
+        stmt = select(Video).where(Video.id == video.id)
+        res = await db_check.execute(stmt)
+        updated_video = res.scalar_one()
+        assert updated_video.status == VideoStatus.APPROVED
+        assert updated_video.retry_count == 0
+        assert updated_video.last_error is None
+        
+        # Clean up database records
+        await db_check.delete(updated_video)
+        
+        stmt_ch = select(Channel).where(Channel.id == channel.id)
+        ch_res = await db_check.execute(stmt_ch)
+        await db_check.delete(ch_res.scalar_one())
+        
+        await db_check.commit()
+

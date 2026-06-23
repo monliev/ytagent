@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import structlog
@@ -8,13 +9,39 @@ from app.api.v1.channels import router as channels_router
 from app.api.v1.logs import router as logs_router
 from app.api.v1.telegram import router as telegram_router
 from app.api.v1.settings import router as settings_router
+from app.utils.telegram_api import object_telegram_api
+from app.core.config import settings
 
 logger = structlog.get_logger()
+
+WEBHOOK_URL = "https://ytagent.my.id/api/v1/telegram/webhook"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Register Telegram webhook on startup."""
+    logger.info("app_startup_begin")
+
+    # Register Telegram webhook (skip if using placeholder token)
+    if "Placeholder" not in settings.TELEGRAM_BOT_TOKEN:
+        result = await object_telegram_api.set_webhook(WEBHOOK_URL)
+        if result.get("ok"):
+            logger.info("telegram_webhook_registered_on_startup", url=WEBHOOK_URL)
+        else:
+            logger.warning("telegram_webhook_registration_failed_on_startup", result=result)
+    else:
+        logger.info("telegram_webhook_skipped_placeholder_token")
+
+    yield
+
+    logger.info("app_shutdown")
+
 
 app = FastAPI(
     title="YTAgent API",
     description="AI orchestrator for YouTube multi-channel management",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS for Dashboard integration
@@ -33,6 +60,7 @@ app.include_router(logs_router, prefix="/api/v1/logs", tags=["logs"])
 app.include_router(telegram_router, prefix="/api/v1/telegram", tags=["telegram"])
 app.include_router(videos_router, prefix="/api/v1/videos", tags=["videos"])
 app.include_router(settings_router, prefix="/api/v1/settings", tags=["settings"])
+
 
 @app.get("/health")
 async def health_check():

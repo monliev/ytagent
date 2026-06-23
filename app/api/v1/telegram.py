@@ -72,6 +72,26 @@ async def _log_telegram_event(
     await db.commit()
 
 
+
+WEBHOOK_URL = "https://ytagent.my.id/api/v1/telegram/webhook"
+
+
+@router.get("/webhook-info")
+async def get_webhook_info(db: AsyncSession = Depends(get_db)):
+    """Return current Telegram webhook configuration (token, URL, pending updates)."""
+    info = await object_telegram_api.get_webhook_info(db=db)
+    return info
+
+
+@router.post("/register-webhook")
+async def register_webhook(db: AsyncSession = Depends(get_db)):
+    """Manually (re-)register the Telegram webhook. Useful after token changes."""
+    result = await object_telegram_api.set_webhook(WEBHOOK_URL, db=db)
+    if result.get("ok"):
+        return {"status": "registered", "url": WEBHOOK_URL}
+    return {"status": "failed", "detail": result}
+
+
 @router.post("/webhook", status_code=status.HTTP_200_OK)
 async def telegram_webhook(
     update: TelegramUpdate,

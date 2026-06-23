@@ -384,3 +384,50 @@ async def discard_video(
     )
     
     return video
+
+
+@router.post("/{id}/retry", response_model=VideoResponse)
+async def retry_video(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> VideoResponse:
+    """Retry a failed or errored video upload."""
+    logger.info("api_retry_video_called", video_id=id, user_id=current_user.id)
+    
+    stmt = select(Video).where(Video.id == id)
+    res = await db.execute(stmt)
+    video = res.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+        
+    if video.status not in [VideoStatus.FAILED, VideoStatus.ERROR]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Video in status '{video.status}' cannot be retried."
+        )
+        
+    video.status = VideoStatus.APPROVED
+    video.retry_count = 0
+    video.last_error = None
+    db.add(video)
+    await db.commit()
+    await db.refresh(video)
+    
+    await _log_video_event(
+        db=db,
+        level=LogLevel.INFO,
+        service="approval",
+        event_type="video_retry_initiated",
+        message=f"Video retry initiated by user ID {current_user.id}",
+        video_id=video.id,
+        channel_id=video.channel_id,
+        user_id=current_user.id
+    )
+    
+    # Dispatch task to Celery queue asynchronously
+    upload_video_task.delay(video.id)
+    logger.info("celery_upload_task_dispatched_via_retry", video_id=video.id)
+    
+    return video
+

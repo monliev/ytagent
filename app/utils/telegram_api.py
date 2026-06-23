@@ -98,4 +98,48 @@ class TelegramAPI:
         except Exception as e:
             logger.error("telegram_edit_message_failed", error=str(e))
             return False
+    async def set_webhook(self, webhook_url: str, db: Optional[Any] = None) -> dict:
+        """Register a webhook URL with the Telegram Bot API."""
+        base_url = await self._get_base_url(db)
+        token = await self._get_token(db)
+        url = f"{base_url}/setWebhook"
+
+        if "Placeholder" in token:
+            logger.info("telegram_set_webhook_skipped_placeholder", webhook_url=webhook_url)
+            return {"ok": True, "skipped": True, "reason": "placeholder_token"}
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    url,
+                    json={"url": webhook_url, "allowed_updates": ["callback_query", "message"]},
+                    timeout=10.0,
+                )
+                data = response.json()
+                if data.get("ok"):
+                    logger.info("telegram_webhook_registered", webhook_url=webhook_url)
+                else:
+                    logger.error("telegram_webhook_registration_failed", response=data)
+                return data
+        except Exception as e:
+            logger.error("telegram_set_webhook_failed", error=str(e))
+            return {"ok": False, "error": str(e)}
+
+    async def get_webhook_info(self, db: Optional[Any] = None) -> dict:
+        """Retrieve current webhook configuration from Telegram."""
+        base_url = await self._get_base_url(db)
+        token = await self._get_token(db)
+        url = f"{base_url}/getWebhookInfo"
+
+        if "Placeholder" in token:
+            return {"ok": True, "skipped": True, "reason": "placeholder_token"}
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=10.0)
+                return response.json()
+        except Exception as e:
+            logger.error("telegram_get_webhook_info_failed", error=str(e))
+            return {"ok": False, "error": str(e)}
+
 object_telegram_api = TelegramAPI()

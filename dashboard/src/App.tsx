@@ -649,6 +649,26 @@ function App() {
     }
   };
 
+  const handleRetryVideo = async (videoId: number) => {
+    try {
+      const res = await fetch(`${API_URL}/videos/${videoId}/retry`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+      if (res.ok) {
+        triggerToast('Video retry initiated!');
+        setIsEditModalOpen(false);
+        refreshAllData();
+      } else {
+        const err = await res.json();
+        triggerToast(err.detail || 'Failed to retry video.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error retrying video.', 'error');
+    }
+  };
+
+
   // Channels management
   const openCreateChannelModal = () => {
     setEditingChannel(null);
@@ -1149,6 +1169,7 @@ function App() {
                     <th>Queue Status</th>
                     <th>Retries</th>
                     <th>Error Detail</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1167,11 +1188,18 @@ function App() {
                       <td style={{ fontSize: '0.8rem', color: 'var(--danger)', maxWidth: '250px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={video.last_error || ''}>
                         {video.last_error || '-'}
                       </td>
+                      <td>
+                        {['failed', 'error'].includes(video.status) && (
+                          <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => openEditModal(video)}>
+                            ✏️ Review / Retry
+                          </button>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {videos.filter(v => v.status !== 'staging' && v.status !== 'detected' && v.status !== 'discarded').length === 0 && (
                     <tr>
-                      <td colSpan={7} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                      <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                         No videos currently in processing queue.
                       </td>
                     </tr>
@@ -1859,15 +1887,30 @@ function App() {
               </div>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
-                <button type="button" className="btn btn-secondary" onClick={handleSaveMetadata}>
-                  💾 Save Draft Changes
-                </button>
-                <button type="button" className="btn btn-success" onClick={() => handleApproveVideo(selectedVideo.id)}>
-                  ✅ Approve & Schedule Upload
-                </button>
-                <button type="button" className="btn btn-danger" style={{ marginLeft: 'auto' }} onClick={() => handleDiscardVideo(selectedVideo.id)}>
-                  🗑️ Discard Video
-                </button>
+                {['failed', 'error'].includes(selectedVideo.status) ? (
+                  <>
+                    <button type="button" className="btn btn-primary" onClick={() => handleRetryVideo(selectedVideo.id)}>
+                      🔁 Retry Upload
+                    </button>
+                    {selectedVideo.status === 'error' && (
+                      <button type="button" className="btn btn-danger" style={{ marginLeft: 'auto' }} onClick={() => handleDiscardVideo(selectedVideo.id)}>
+                        🗑️ Discard Video
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <button type="button" className="btn btn-secondary" onClick={handleSaveMetadata}>
+                      💾 Save Draft Changes
+                    </button>
+                    <button type="button" className="btn btn-success" onClick={() => handleApproveVideo(selectedVideo.id)}>
+                      ✅ Approve & Schedule Upload
+                    </button>
+                    <button type="button" className="btn btn-danger" style={{ marginLeft: 'auto' }} onClick={() => handleDiscardVideo(selectedVideo.id)}>
+                      🗑️ Discard Video
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           </div>
