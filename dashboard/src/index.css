@@ -805,9 +805,18 @@ tr:hover td {
   to { transform: rotate(360deg); }
 }
 
-/* reCAPTCHA explicit-render container: no extra chrome */
-#recaptcha-explicit-container > div,
+/* reCAPTCHA explicit-render: clip the white border Google adds around the iframe (known bug since 2015) */
+#recaptcha-explicit-container > div {
+  overflow: hidden !important;
+  width: 298px !important;
+  height: 74px !important;
+  border-radius: 4px !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
 #recaptcha-explicit-container iframe {
+  margin: -1px 0px 0px -2px !important;
   border: none !important;
   box-shadow: none !important;
   outline: none !important;
