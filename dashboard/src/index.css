@@ -797,3 +797,10 @@ tr:hover td {
   from { transform: translateX(100%); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
 }
+
+/* Google reCAPTCHA iframe blending style fix */
+.g-recaptcha iframe {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
