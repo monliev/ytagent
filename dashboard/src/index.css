@@ -805,4 +805,22 @@ tr:hover td {
   background: transparent !important;
   box-shadow: none !important;
   outline: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.login-card iframe {
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.login-card div:has(iframe) {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
