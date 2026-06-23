@@ -1324,69 +1324,87 @@ function App() {
                   🌐 Global System Settings
                 </h3>
                 
-                <form onSubmit={handleSaveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                  <div className="form-group">
-                    <label htmlFor="settings-tg-token">Telegram Bot Token</label>
-                    <input
-                      id="settings-tg-token"
-                      type="password"
-                      className="form-input"
-                      value={settingsTelegramToken}
-                      onChange={e => setSettingsTelegramToken(e.target.value)}
-                      placeholder="Enter Telegram bot token..."
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label htmlFor="settings-tg-supervisor">Telegram Supervisor ID</label>
-                    <input
-                      id="settings-tg-supervisor"
-                      type="text"
-                      className="form-input"
-                      value={settingsSupervisorId}
-                      onChange={e => setSettingsSupervisorId(e.target.value)}
-                      placeholder="e.g. 6596472755"
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label htmlFor="settings-cf-url">Cloudflare AI URL</label>
-                    <input
-                      id="settings-cf-url"
-                      type="text"
-                      className="form-input"
-                      value={settingsCfAiUrl}
-                      onChange={e => setSettingsCfAiUrl(e.target.value)}
-                      placeholder="https://api.cloudflare.com/client/v4/accounts/.../ai/run/..."
-                    />
-                  </div>
-
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <form onSubmit={handleSaveSettings} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  {/* Telegram Notifications Section */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '20px' }}>
+                    <h4 style={{ fontSize: '0.95rem', color: 'var(--primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      💬 Telegram Bot Notifications
+                    </h4>
                     <div className="form-group">
-                      <label htmlFor="settings-recaptcha-site">reCAPTCHA Site Key</label>
+                      <label htmlFor="settings-tg-token">Telegram Bot Token</label>
                       <input
-                        id="settings-recaptcha-site"
-                        type="text"
-                        className="form-input"
-                        value={settingsRecaptchaSiteKey}
-                        onChange={e => setSettingsRecaptchaSiteKey(e.target.value)}
-                        placeholder="Public site key"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label htmlFor="settings-recaptcha-secret">reCAPTCHA Secret Key</label>
-                      <input
-                        id="settings-recaptcha-secret"
+                        id="settings-tg-token"
                         type="password"
                         className="form-input"
-                        value={settingsRecaptchaSecretKey}
-                        onChange={e => setSettingsRecaptchaSecretKey(e.target.value)}
-                        placeholder="Private secret key"
+                        value={settingsTelegramToken}
+                        onChange={e => setSettingsTelegramToken(e.target.value)}
+                        placeholder="Enter Telegram bot token..."
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="settings-tg-supervisor">Telegram Supervisor ID</label>
+                      <input
+                        id="settings-tg-supervisor"
+                        type="text"
+                        className="form-input"
+                        value={settingsSupervisorId}
+                        onChange={e => setSettingsSupervisorId(e.target.value)}
+                        placeholder="e.g. 6596472755"
                       />
                     </div>
                   </div>
 
-                  <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start', marginTop: '8px' }}>
+                  {/* Cloudflare AI Section */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '20px' }}>
+                    <h4 style={{ fontSize: '0.95rem', color: 'var(--primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      ☁️ Cloudflare AI Integration
+                    </h4>
+                    <div className="form-group">
+                      <label htmlFor="settings-cf-url">Cloudflare AI URL</label>
+                      <input
+                        id="settings-cf-url"
+                        type="text"
+                        className="form-input"
+                        value={settingsCfAiUrl}
+                        onChange={e => setSettingsCfAiUrl(e.target.value)}
+                        placeholder="https://api.cloudflare.com/client/v4/accounts/.../ai/run/..."
+                      />
+                    </div>
+                  </div>
+
+                  {/* Google reCAPTCHA Section */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', paddingBottom: '4px' }}>
+                    <h4 style={{ fontSize: '0.95rem', color: 'var(--primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      🛡️ Google reCAPTCHA v2 Login Security
+                    </h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                      <div className="form-group">
+                        <label htmlFor="settings-recaptcha-site">reCAPTCHA Site Key</label>
+                        <input
+                          id="settings-recaptcha-site"
+                          type="text"
+                          className="form-input"
+                          value={settingsRecaptchaSiteKey}
+                          onChange={e => setSettingsRecaptchaSiteKey(e.target.value)}
+                          placeholder="Public site key"
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="settings-recaptcha-secret">reCAPTCHA Secret Key</label>
+                        <input
+                          id="settings-recaptcha-secret"
+                          type="password"
+                          className="form-input"
+                          value={settingsRecaptchaSecretKey}
+                          onChange={e => setSettingsRecaptchaSecretKey(e.target.value)}
+                          placeholder="Private secret key"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start', marginTop: '12px' }}>
                     💾 Save System Settings
                   </button>
                 </form>
