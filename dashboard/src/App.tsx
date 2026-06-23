@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react';
 import './App.css';
 
 // Base API URL
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const API_URL = import.meta.env.VITE_API_URL || 
+  (typeof window !== 'undefined' && window.location.port === '5173' 
+    ? 'http://localhost:8000/api/v1' 
+    : '/api/v1');
 
 // Types Definitions
 interface User {
