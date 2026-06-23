@@ -53,11 +53,11 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # Application Services (To be activated/built in subsequent milestones)
+  # Application Services
   api:
     build:
-      context: ./app
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: app/Dockerfile
     container_name: ytagent-api
     environment:
       - DATABASE_URL=mysql+asyncmy://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
@@ -66,15 +66,15 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - SECRET_KEY=${SECRET_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - CF_AI_URL=${CF_AI_URL}
+      - SUPERVISOR_TELEGRAM_ID=${SUPERVISOR_TELEGRAM_ID}
+      - CF_AI_URL=${CF_AI_URL:-}
       - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
-      - OMV_MOUNT_PATH=${OMV_MOUNT_PATH}
+      - OMV_MOUNT_PATH=${OMV_MOUNT_PATH:-/mnt/omv}
       - TZ=${TZ}
     volumes:
-      - ${OMV_MOUNT_PATH}:${OMV_MOUNT_PATH}:ro
       - ./secrets:/secrets:ro
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     depends_on:
       mysql:
         condition: service_healthy
@@ -88,8 +88,8 @@ services:
 
   worker:
     build:
-      context: ./app
-      dockerfile: Dockerfile.worker
+      context: .
+      dockerfile: app/Dockerfile.worker
     container_name: ytagent-worker
     environment:
       - DATABASE_URL=mysql+asyncmy://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
@@ -98,12 +98,12 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - SECRET_KEY=${SECRET_KEY}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
-      - CF_AI_URL=${CF_AI_URL}
+      - SUPERVISOR_TELEGRAM_ID=${SUPERVISOR_TELEGRAM_ID}
+      - CF_AI_URL=${CF_AI_URL:-}
       - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
-      - OMV_MOUNT_PATH=${OMV_MOUNT_PATH}
+      - OMV_MOUNT_PATH=${OMV_MOUNT_PATH:-/mnt/omv}
       - TZ=${TZ}
     volumes:
-      - ${OMV_MOUNT_PATH}:${OMV_MOUNT_PATH}:ro
       - ./secrets:/secrets:ro
     depends_on:
       mysql:
@@ -121,10 +121,10 @@ services:
 
   scheduler:
     build:
-      context: ./app
-      dockerfile: Dockerfile.worker
+      context: .
+      dockerfile: app/Dockerfile.worker
     container_name: ytagent-scheduler
-    command: celery -A tasks beat -l info
+    command: celery -A app.tasks.celery_app beat -l info
     environment:
       - DATABASE_URL=mysql+asyncmy://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
       - SYNC_DATABASE_URL=mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/ytagent
@@ -161,7 +161,6 @@ services:
     container_name: ytagent-dashboard
     ports:
       - "80:80"
-      - "443:443"
     depends_on:
       api:
         condition: service_started
