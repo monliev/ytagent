@@ -152,7 +152,7 @@ services:
         condition: service_started
     restart: unless-stopped
     profiles:
-      - app
+      - filewatcher
 
   dashboard:
     build:
