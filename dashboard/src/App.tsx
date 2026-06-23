@@ -462,7 +462,6 @@ function App() {
   const stagingVideos = videos.filter(v => v.status === 'staging');
   const queuedVideos = videos.filter(v => ['approved', 'queued', 'uploading'].includes(v.status));
   const completedVideos = videos.filter(v => v.status === 'uploaded');
-  const failedVideos = videos.filter(v => v.status === 'failed');
 
   if (!token) {
     return (
@@ -538,7 +537,7 @@ function App() {
               boxShadow: 'var(--shadow-lg)', overflow: 'hidden'
             }}>
               <div 
-                style={{ padding: '10px 14px', cursor: 'pointer', hover: { backgroundColor: '#334155' } }}
+                style={{ padding: '10px 14px', cursor: 'pointer' }}
                 onClick={() => { setSelectedChannelId('all'); setIsChannelSelectorOpen(false); }}
                 className="channel-dropdown-item"
               >
