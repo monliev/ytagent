@@ -1925,6 +1925,72 @@ function App() {
                   🔑 GCP Projects & OAuth Manager
                 </h3>
 
+                {/* Styled Quick Helper Guide & Console Links */}
+                <div style={{
+                  background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%)',
+                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '16px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '12px',
+                  fontSize: '0.85rem'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)', fontWeight: 600 }}>
+                    ℹ️ Quick Setup Guide & Google Cloud Console Links
+                  </div>
+                  <div style={{ color: 'var(--text-secondary)', lineHeight: '1.45' }}>
+                    Setup YouTube API access and register your credentials in a few steps. Need help? Use the quick links below.
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
+                    <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', padding: '6px 12px', fontSize: '0.8rem' }}>
+                      🌐 Google Cloud Console
+                    </a>
+                    <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', padding: '6px 12px', fontSize: '0.8rem' }}>
+                      🎬 Enable YouTube API
+                    </a>
+                    <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', padding: '6px 12px', fontSize: '0.8rem' }}>
+                      🔑 GCP Credentials Screen
+                    </a>
+                    <a href="https://developers.google.com/oauthplayground/" target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', padding: '6px 12px', fontSize: '0.8rem' }}>
+                      ⚙️ OAuth 2.0 Playground
+                    </a>
+                  </div>
+                  <details style={{ marginTop: '4px', cursor: 'pointer' }}>
+                    <summary style={{ color: 'var(--primary)', fontWeight: 600, fontSize: '0.8rem', outline: 'none' }}>
+                      📖 View Step-by-Step Setup Guide
+                    </summary>
+                    <div style={{ color: 'var(--text-secondary)', padding: '12px 4px 4px 4px', fontSize: '0.8rem', cursor: 'default', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div>
+                        <strong>Step 1: Enable YouTube API</strong>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Go to the Google Cloud Console link above, create or select a project, and enable the <strong>YouTube Data API v3</strong>.</p>
+                      </div>
+                      <div>
+                        <strong>Step 2: Configure Consent Screen</strong>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Set up your <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)' }}>OAuth Consent Screen</a> as <strong>External</strong> and add your target YouTube Google account as a <strong>Test User</strong>.</p>
+                      </div>
+                      <div>
+                        <strong>Step 3: Create OAuth Client ID</strong>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Go to Credentials, click "Create Credentials" → "OAuth client ID" (Application type: <strong>Web application</strong>).</p>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Add Authorized Redirect URI: <code>https://developers.google.com/oauthplayground</code></p>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Download the Client Secrets JSON file, open it, and paste the entire JSON string into the "Client Secrets JSON" field below.</p>
+                      </div>
+                      <div>
+                        <strong>Step 4: Generate OAuth Refresh Token</strong>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Go to OAuth 2.0 Playground, click the gear icon (top right):</p>
+                        <ul style={{ margin: '4px 0 4px 20px', padding: 0, color: 'var(--text-muted)' }}>
+                          <li>Check "Use your own OAuth credentials"</li>
+                          <li>Enter your Client ID and Client Secret (from downloaded JSON)</li>
+                          <li>Close settings</li>
+                        </ul>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>In Step 1 of Playground, input scope: <code>https://www.googleapis.com/auth/youtube.upload</code> and click <strong>Authorize APIs</strong>.</p>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Sign in to your target YouTube Google account, grant permissions, then in Step 2 click <strong>Exchange authorization code for tokens</strong>.</p>
+                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Copy the generated <code>refresh_token</code> and paste it in the "OAuth Refresh Token" field below.</p>
+                      </div>
+                    </div>
+                  </details>
+                </div>
+
                 <div className="form-group" style={{ marginBottom: '16px' }}>
                   <label htmlFor="settings-channel-select">Select Target Channel</label>
                   <select
