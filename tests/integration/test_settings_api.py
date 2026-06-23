@@ -180,3 +180,101 @@ async def test_recaptcha_login_validation(db_session):
             })
             assert res_success.status_code == 200
             assert "access_token" in res_success.json()
+
+
+@pytest.mark.asyncio
+async def test_system_connection_endpoints(db_session):
+    # Create test user
+    password = "super_secret_password"
+    user = User(
+        telegram_id=987654321,
+        username="test_user_connections",
+        full_name="Connection Checker",
+        role=UserRole.SUPERVISOR,
+        hashed_password=hash_password(password),
+        is_active=True
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # 1. Login to get authentication token
+        login_res = await ac.post("/api/v1/auth/login", json={
+            "username": "test_user_connections",
+            "password": password
+        })
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Mock responses
+        original_post = httpx.AsyncClient.post
+        original_get = httpx.AsyncClient.get
+
+        mock_resp_tg = MagicMock()
+        mock_resp_tg.status_code = 200
+        mock_resp_tg.json.return_value = {"ok": True, "result": {"username": "my_test_bot", "first_name": "Test Bot"}}
+
+        mock_resp_cf = MagicMock()
+        mock_resp_cf.status_code = 200
+
+        mock_resp_re = MagicMock()
+        mock_resp_re.status_code = 200
+
+        async def mock_get(client_self, url, *args, **kwargs):
+            if "api.telegram.org" in str(url):
+                return mock_resp_tg
+            return await original_get(client_self, url, *args, **kwargs)
+
+        async def mock_post(client_self, url, *args, **kwargs):
+            if "cloudflare.ai" in str(url):
+                return mock_resp_cf
+            if "siteverify" in str(url):
+                return mock_resp_re
+            return await original_post(client_self, url, *args, **kwargs)
+
+        with patch("httpx.AsyncClient.get", new=mock_get), patch("httpx.AsyncClient.post", new=mock_post):
+            # Test A: Telegram check
+            res_tg = await ac.post("/api/v1/system/test-telegram", json={
+                "telegram_bot_token": "123456:ABC-DEF"
+            }, headers=headers)
+            assert res_tg.status_code == 200
+            assert res_tg.json()["status"] == "connected"
+
+            # Test B: Cloudflare AI check
+            res_cf = await ac.post("/api/v1/system/test-cloudflare", json={
+                "cf_ai_url": "https://cloudflare.ai/run/model"
+            }, headers=headers)
+            assert res_cf.status_code == 200
+            assert res_cf.json()["status"] == "connected"
+
+            # Test C: reCAPTCHA check
+            res_re = await ac.post("/api/v1/system/test-recaptcha", json={
+                "recaptcha_site_key": "some_site_key",
+                "recaptcha_secret_key": "some_secret_key"
+            }, headers=headers)
+            assert res_re.status_code == 200
+            assert res_re.json()["status"] == "connected"
+
+        # Test D: SFTP Connection check (mock paramiko)
+        import sys
+        mock_paramiko = MagicMock()
+        mock_transport_instance = MagicMock()
+        mock_paramiko.Transport.return_value = mock_transport_instance
+        
+        mock_sftp_instance = MagicMock()
+        mock_sftp_instance.listdir.return_value = ["file1.txt"]
+        mock_paramiko.SFTPClient.from_transport.return_value = mock_sftp_instance
+        
+        sys.modules["paramiko"] = mock_paramiko
+        
+        res_sftp = await ac.post("/api/v1/system/test-sftp", json={
+            "sftp_host": "127.0.0.1",
+            "sftp_port": 22,
+            "sftp_user": "test_user",
+            "sftp_password": "test_password",
+            "sftp_base_path": "/test/path"
+        }, headers=headers)
+        assert res_sftp.status_code == 200
+        assert res_sftp.json()["status"] == "connected"

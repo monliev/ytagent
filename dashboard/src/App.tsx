@@ -174,6 +174,12 @@ function App() {
   const recaptchaContainerRef = React.useRef<HTMLDivElement>(null);
   const recaptchaWidgetId = React.useRef<number | null>(null);
 
+  // Connection check states
+  const [connectionStatusTelegram, setConnectionStatusTelegram] = useState<{status: 'idle'|'checking'|'connected'|'failed', detail: string}>({status: 'idle', detail: ''});
+  const [connectionStatusCloudflare, setConnectionStatusCloudflare] = useState<{status: 'idle'|'checking'|'connected'|'failed', detail: string}>({status: 'idle', detail: ''});
+  const [connectionStatusRecaptcha, setConnectionStatusRecaptcha] = useState<{status: 'idle'|'checking'|'connected'|'failed', detail: string}>({status: 'idle', detail: ''});
+  const [connectionStatusSftp, setConnectionStatusSftp] = useState<{status: 'idle'|'checking'|'connected'|'failed', detail: string}>({status: 'idle', detail: ''});
+
   // GCP Projects & Credentials state
   const [selectedSettingsChannelId, setSelectedSettingsChannelId] = useState<number | ''>('');
   const [channelProjects, setChannelProjects] = useState<any[]>([]);
@@ -482,6 +488,169 @@ function App() {
     } catch (e) {
       triggerToast('Network error saving settings.', 'error');
     }
+  };
+
+  const testTelegramConnection = async () => {
+    if (!settingsTelegramToken) {
+      triggerToast('Please enter a Telegram bot token first.', 'error');
+      return;
+    }
+    setConnectionStatusTelegram({ status: 'checking', detail: 'Testing connection to Telegram Bot API...' });
+    try {
+      const res = await fetch(`${API_URL}/system/test-telegram`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          telegram_bot_token: settingsTelegramToken,
+          supervisor_telegram_id: settingsSupervisorId ? parseInt(settingsSupervisorId) : null
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'connected') {
+        setConnectionStatusTelegram({ status: 'connected', detail: data.detail });
+        triggerToast('Telegram connection successful!', 'success');
+      } else {
+        setConnectionStatusTelegram({ status: 'failed', detail: data.detail || 'Connection check failed.' });
+        triggerToast(data.detail || 'Telegram connection failed.', 'error');
+      }
+    } catch (e) {
+      setConnectionStatusTelegram({ status: 'failed', detail: 'Network error checking Telegram connection.' });
+      triggerToast('Network error checking Telegram connection.', 'error');
+    }
+  };
+
+  const testCloudflareConnection = async () => {
+    if (!settingsCfAiUrl) {
+      triggerToast('Please enter a Cloudflare AI URL first.', 'error');
+      return;
+    }
+    setConnectionStatusCloudflare({ status: 'checking', detail: 'Testing connection to Cloudflare AI...' });
+    try {
+      const res = await fetch(`${API_URL}/system/test-cloudflare`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          cf_ai_url: settingsCfAiUrl
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'connected') {
+        setConnectionStatusCloudflare({ status: 'connected', detail: data.detail });
+        triggerToast('Cloudflare connection successful!', 'success');
+      } else {
+        setConnectionStatusCloudflare({ status: 'failed', detail: data.detail || 'Connection check failed.' });
+        triggerToast(data.detail || 'Cloudflare connection failed.', 'error');
+      }
+    } catch (e) {
+      setConnectionStatusCloudflare({ status: 'failed', detail: 'Network error checking Cloudflare connection.' });
+      triggerToast('Network error checking Cloudflare connection.', 'error');
+    }
+  };
+
+  const testRecaptchaConnection = async () => {
+    if (!settingsRecaptchaSiteKey || !settingsRecaptchaSecretKey) {
+      triggerToast('Please enter both site key and secret key.', 'error');
+      return;
+    }
+    setConnectionStatusRecaptcha({ status: 'checking', detail: 'Testing connection to Google reCAPTCHA...' });
+    try {
+      const res = await fetch(`${API_URL}/system/test-recaptcha`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          recaptcha_site_key: settingsRecaptchaSiteKey,
+          recaptcha_secret_key: settingsRecaptchaSecretKey
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'connected') {
+        setConnectionStatusRecaptcha({ status: 'connected', detail: data.detail });
+        triggerToast('reCAPTCHA connection successful!', 'success');
+      } else {
+        setConnectionStatusRecaptcha({ status: 'failed', detail: data.detail || 'Connection check failed.' });
+        triggerToast(data.detail || 'reCAPTCHA connection failed.', 'error');
+      }
+    } catch (e) {
+      setConnectionStatusRecaptcha({ status: 'failed', detail: 'Network error checking reCAPTCHA connection.' });
+      triggerToast('Network error checking reCAPTCHA connection.', 'error');
+    }
+  };
+
+  const testSftpConnection = async () => {
+    if (!settingsSftpHost || !settingsSftpUser || !settingsSftpPassword) {
+      triggerToast('Please fill out SFTP host, username, and password.', 'error');
+      return;
+    }
+    setConnectionStatusSftp({ status: 'checking', detail: 'Testing connection to SFTP/NAS...' });
+    try {
+      const res = await fetch(`${API_URL}/system/test-sftp`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          sftp_host: settingsSftpHost,
+          sftp_port: settingsSftpPort ? parseInt(settingsSftpPort) : 22,
+          sftp_user: settingsSftpUser,
+          sftp_password: settingsSftpPassword,
+          sftp_base_path: settingsSftpBasePath
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.status === 'connected') {
+        setConnectionStatusSftp({ status: 'connected', detail: data.detail });
+        triggerToast('SFTP Connection successful!', 'success');
+      } else {
+        setConnectionStatusSftp({ status: 'failed', detail: data.detail || 'Connection check failed.' });
+        triggerToast(data.detail || 'SFTP Connection failed.', 'error');
+      }
+    } catch (e) {
+      setConnectionStatusSftp({ status: 'failed', detail: 'Network error checking SFTP connection.' });
+      triggerToast('Network error checking SFTP connection.', 'error');
+    }
+  };
+
+  const renderConnectionStatus = (statusInfo: { status: 'idle'|'checking'|'connected'|'failed', detail: string }) => {
+    if (statusInfo.status === 'idle') return null;
+    
+    let color = 'var(--text-muted)';
+    let bg = 'rgba(255,255,255,0.02)';
+    let border = '1px solid rgba(255,255,255,0.06)';
+    
+    if (statusInfo.status === 'checking') {
+      color = 'var(--warning)';
+      bg = 'rgba(245, 158, 11, 0.05)';
+      border = '1px solid rgba(245, 158, 11, 0.15)';
+    } else if (statusInfo.status === 'connected') {
+      color = 'var(--success)';
+      bg = 'rgba(16, 185, 129, 0.05)';
+      border = '1px solid rgba(16, 185, 129, 0.15)';
+    } else if (statusInfo.status === 'failed') {
+      color = 'var(--danger)';
+      bg = 'rgba(239, 68, 68, 0.05)';
+      border = '1px solid rgba(239, 68, 68, 0.15)';
+    }
+    
+    return (
+      <div style={{
+        marginTop: '10px',
+        padding: '10px 14px',
+        background: bg,
+        border: border,
+        borderRadius: 'var(--radius-sm)',
+        fontSize: '0.8rem',
+        color: color,
+        lineHeight: '1.4',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '2px'
+      }}>
+        <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px' }}>
+          {statusInfo.status === 'checking' && '🔄 Checking connection...'}
+          {statusInfo.status === 'connected' && '🟢 Connected'}
+          {statusInfo.status === 'failed' && '🔴 Connection Failed'}
+        </div>
+        <div style={{ color: 'var(--text-secondary)' }}>{statusInfo.detail}</div>
+      </div>
+    );
   };
 
   const fetchChannelProjects = async (chanId: number) => {
@@ -1870,6 +2039,15 @@ function App() {
                         placeholder="e.g. 6596472755"
                       />
                     </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={testTelegramConnection}
+                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '4px' }}
+                    >
+                      🔌 Test Telegram Bot
+                    </button>
+                    {renderConnectionStatus(connectionStatusTelegram)}
                   </div>
 
                   {/* Cloudflare AI Section */}
@@ -1888,6 +2066,15 @@ function App() {
                         placeholder="https://api.cloudflare.com/client/v4/accounts/.../ai/run/..."
                       />
                     </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={testCloudflareConnection}
+                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '4px' }}
+                    >
+                      🔌 Test Cloudflare AI
+                    </button>
+                    {renderConnectionStatus(connectionStatusCloudflare)}
                   </div>
 
                   {/* Google reCAPTCHA Section */}
@@ -1919,6 +2106,15 @@ function App() {
                         />
                       </div>
                     </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={testRecaptchaConnection}
+                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '10px' }}
+                    >
+                      🔌 Test reCAPTCHA Config
+                    </button>
+                    {renderConnectionStatus(connectionStatusRecaptcha)}
                   </div>
 
                   {/* SFTP / NAS Connection Section */}
@@ -1989,6 +2185,15 @@ function App() {
                         placeholder="e.g. /volume1/youtube"
                       />
                     </div>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={testSftpConnection}
+                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '4px' }}
+                    >
+                      🔌 Test SFTP/NAS Connection
+                    </button>
+                    {renderConnectionStatus(connectionStatusSftp)}
                   </div>
 
                   <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start', marginTop: '12px' }}>
