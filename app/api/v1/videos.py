@@ -438,8 +438,7 @@ async def retry_video(
 @router.get("/thumbnails/{thumbnail_id}/image")
 async def get_thumbnail_image(
     thumbnail_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db)
 ):
     """Retrieve the actual binary image file for a thumbnail draft."""
     stmt = select(ThumbnailDraft).where(ThumbnailDraft.id == thumbnail_id)
@@ -457,8 +456,7 @@ async def get_thumbnail_image(
 @router.get("/{id}/screenshot")
 async def get_video_screenshot(
     id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db)
 ):
     """Retrieve the actual video screenshot image file."""
     stmt = select(Video).where(Video.id == id)
