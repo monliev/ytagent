@@ -160,18 +160,29 @@ async def get_watch_folders(
             transport = paramiko.Transport((sftp_host, sftp_port))
             transport.connect(username=sftp_user, password=sftp_pass)
             sftp = paramiko.SFTPClient.from_transport(transport)
+            dirs = []
             try:
-                entries = sftp.listdir_attr(sftp_base)
                 import stat as stat_mod
-                dirs = sorted([
-                    f"{sftp_base.rstrip('/')}/{e.filename}"
-                    for e in entries
-                    if stat_mod.S_ISDIR(e.st_mode)
-                ])
+                # Level 1 scan
+                entries1 = sftp.listdir_attr(sftp_base)
+                for e1 in entries1:
+                    if stat_mod.S_ISDIR(e1.st_mode) and not e1.filename.startswith("."):
+                        p1 = f"{sftp_base.rstrip('/')}/{e1.filename}"
+                        dirs.append(p1)
+                        # Level 2 scan
+                        try:
+                            entries2 = sftp.listdir_attr(p1)
+                            for e2 in entries2:
+                                if stat_mod.S_ISDIR(e2.st_mode) and not e2.filename.startswith("."):
+                                    p2 = f"{p1}/{e2.filename}"
+                                    dirs.append(p2)
+                        except Exception:
+                            pass
             finally:
                 sftp.close()
                 transport.close()
 
+            dirs.sort()
             logger.info("sftp_watch_folders_listed", count=len(dirs))
             return dirs
 
@@ -189,11 +200,21 @@ async def get_watch_folders(
             logger.warning("omv_mount_path_not_exists", path=mount_path)
             return []
         try:
-            dirs = sorted([
-                os.path.join(mount_path, d)
-                for d in os.listdir(mount_path)
-                if os.path.isdir(os.path.join(mount_path, d))
-            ])
+            dirs = []
+            # Level 1 scan
+            for d1 in os.listdir(mount_path):
+                p1 = os.path.join(mount_path, d1)
+                if os.path.isdir(p1) and not d1.startswith("."):
+                    dirs.append(p1)
+                    # Level 2 scan
+                    try:
+                        for d2 in os.listdir(p1):
+                            p2 = os.path.join(p1, d2)
+                            if os.path.isdir(p2) and not d2.startswith("."):
+                                dirs.append(p2)
+                    except Exception:
+                        pass
+            dirs.sort()
             logger.info("local_watch_folders_listed", count=len(dirs))
             return dirs
         except Exception as e:
