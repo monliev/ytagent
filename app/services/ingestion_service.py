@@ -65,16 +65,29 @@ class IngestionService:
             channel_name=channel_name
         )
 
-        # 1. Match Channel
-        stmt = select(Channel).where(
-            (Channel.name == channel_name) |
-            (Channel.folder_path == channel_name) |
-            (Channel.folder_path.endswith(f"/{channel_name}")) |
-            (Channel.folder_path.endswith(f"\\{channel_name}"))
-        ).where(Channel.is_active == True)
-        
+        # 1. Match Channel (Robust exact and prefix/subdirectory directory match)
+        stmt = select(Channel).where(Channel.is_active == True)
         result = await db.execute(stmt)
-        channel = result.scalar_one_or_none()
+        active_channels = result.scalars().all()
+        
+        channel = None
+        # Try exact match first (by name or folder_path)
+        for chan in active_channels:
+            if chan.name == channel_name or chan.folder_path == channel_name:
+                channel = chan
+                break
+                
+        # Try prefix/subdirectory match
+        if not channel:
+            # Sort channels by folder_path length descending to match the most specific directory first
+            sorted_chans = sorted(active_channels, key=lambda c: len(c.folder_path or ""), reverse=True)
+            for chan in sorted_chans:
+                if chan.folder_path and (
+                    channel_name.startswith(chan.folder_path) or 
+                    chan.folder_path.startswith(channel_name)
+                ):
+                    channel = chan
+                    break
         
         if not channel:
             logger.error("channel_not_found", channel_name=channel_name)

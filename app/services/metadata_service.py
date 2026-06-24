@@ -137,11 +137,12 @@ class MetadataService:
 
     async def generate_ai_draft(self, filename: str, channel: Channel, duration_seconds: int = 0, db: Optional[Any] = None) -> dict[str, Any]:
         """Generate title, description, tags, and Hermes review note using Cloudflare LLM.
-        Falls back to rules-based generate_draft on error or if unconfigured.
+        AI generation is temporarily disabled; returns rules-based template draft directly.
         """
         # Get base fallback first
         fallback = self.generate_draft(filename, channel, duration_seconds)
-        fallback["ai_review_note"] = "Hermes: Draf metadata dibuat menggunakan template default. Silakan sesuaikan lebih lanjut."
+        fallback["ai_review_note"] = "Draft generated using manual settings templates."
+        return fallback
         
         from app.core.config import settings
         import httpx
@@ -242,7 +243,11 @@ class MetadataService:
             )
             logger.info("Hermes AI draft responded with status_code: %d", resp.status_code)
             if resp.status_code == 200:
-                ai_data = resp.json()
+                try:
+                    ai_data = resp.json()
+                except Exception as json_err:
+                    logger.error("Hermes AI draft returned 200 but failed to parse JSON. Raw text: %s", resp.text)
+                    raise json_err
                 logger.info("Hermes AI draft response json: %s", json.dumps(ai_data))
                 if "choices" in ai_data and len(ai_data["choices"]) > 0:
                     text = ai_data["choices"][0]["message"]["content"]

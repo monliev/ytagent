@@ -165,7 +165,7 @@ function App() {
 
   // Hermes AI Enhancement states
   const [aiEnhancedData, setAiEnhancedData] = useState<{ titles: string[], description: string, tags: string[] } | null>(null);
-  const [loadingEnhancement, setLoadingEnhancement] = useState(false);
+
 
   // Secondary Features state
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
@@ -948,7 +948,6 @@ function App() {
     setEditAiGenerated(video.ai_generated || false);
     setEditMadeForKids(video.made_for_kids || false);
     setAiEnhancedData(null);
-    setLoadingEnhancement(false);
     setIsEditModalOpen(true);
     setThumbnailDrafts([]);
     
@@ -1018,29 +1017,35 @@ function App() {
     }
   };
 
-  const handleAskHermesOptimize = async () => {
+  const handleApplyChannelPresets = async () => {
     if (!selectedVideo) return;
-    setLoadingEnhancement(true);
-    setAiEnhancedData(null);
     try {
-      const res = await fetch(`${API_URL}/videos/${selectedVideo.id}/enhance`, {
+      const res = await fetch(`${API_URL}/videos/${selectedVideo.id}/apply-presets`, {
         method: 'POST',
         headers: getHeaders(),
       });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
-        setAiEnhancedData(data);
-        triggerToast('Hermes optimization drafts generated!', 'success');
+        setSelectedVideo(data);
+        setEditTitle(data.current_title || '');
+        setEditDesc(data.current_description || '');
+        setEditTags((data.current_tags || []).join(', '));
+        setEditPlaylistId(data.playlist_id || '');
+        setEditDefaultLanguage(data.default_language || '');
+        setEditCategoryId(data.category_id || '10');
+        setEditAgeRestricted(data.age_restricted || false);
+        setEditAiGenerated(data.ai_generated || false);
+        setEditMadeForKids(data.made_for_kids || false);
+        triggerToast('Channel templates and presets applied successfully!', 'success');
+        refreshAllData();
       } else {
-        const data = await res.json();
-        triggerToast(data.detail || 'Hermes optimization failed.', 'error');
+        triggerToast(data.detail || 'Failed to apply channel presets.', 'error');
       }
     } catch (e) {
-      triggerToast('Network error during Hermes optimization.', 'error');
-    } finally {
-      setLoadingEnhancement(false);
+      triggerToast('Network error applying presets.', 'error');
     }
   };
+
 
   const handleApproveVideo = async (videoId: number) => {
     try {
@@ -1911,7 +1916,7 @@ function App() {
                       <td>{(video.file_size_bytes / (1024*1024)).toFixed(1)} MB</td>
                       <td style={{ textTransform: 'capitalize' }}>{video.youtube_privacy}</td>
                       <td>
-                        <span className={`card-badge badge-${video.status}`}>
+                        <span className={`status-badge badge-${video.status}`}>
                           {video.status}
                         </span>
                       </td>
@@ -1967,7 +1972,7 @@ function App() {
                       ⏰ Scheduled Time: <b>{new Date(v.scheduled_time!).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</b>
                     </p>
                   </div>
-                  <span className="card-badge badge-approved" style={{ alignSelf: 'center' }}>{v.status}</span>
+                  <span className="status-badge badge-approved" style={{ alignSelf: 'center' }}>{v.status}</span>
                 </div>
               ))}
 
@@ -2419,9 +2424,9 @@ function App() {
                   </div>
 
                   {/* Cloudflare AI Section */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '20px' }}>
-                    <h4 style={{ fontSize: '0.95rem', color: 'var(--primary)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      ☁️ Cloudflare AI Integration
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '20px', opacity: 0.5 }}>
+                    <h4 style={{ fontSize: '0.95rem', color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      ☁️ Cloudflare AI Integration (Disabled)
                     </h4>
                     <div className="form-group">
                       <label htmlFor="settings-cf-url">Cloudflare AI URL</label>
@@ -2432,6 +2437,8 @@ function App() {
                         value={settingsCfAiUrl}
                         onChange={e => setSettingsCfAiUrl(e.target.value)}
                         placeholder="https://api.cloudflare.com/client/v4/accounts/.../ai/run/..."
+                        disabled={true}
+                        style={{ cursor: 'not-allowed' }}
                       />
                     </div>
                     <div className="form-group">
@@ -2443,6 +2450,8 @@ function App() {
                         value={settingsCfAiToken}
                         onChange={e => setSettingsCfAiToken(e.target.value)}
                         placeholder="••••••••••••••••"
+                        disabled={true}
+                        style={{ cursor: 'not-allowed' }}
                       />
                     </div>
                     <div className="form-group">
@@ -2454,13 +2463,16 @@ function App() {
                         value={settingsCfAiModel}
                         onChange={e => setSettingsCfAiModel(e.target.value)}
                         placeholder="hermes"
+                        disabled={true}
+                        style={{ cursor: 'not-allowed' }}
                       />
                     </div>
                     <button
                       type="button"
                       className="btn btn-secondary"
                       onClick={testCloudflareConnection}
-                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '4px' }}
+                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '4px', cursor: 'not-allowed' }}
+                      disabled={true}
                     >
                       🔌 Test Cloudflare AI
                     </button>
@@ -3187,15 +3199,14 @@ function App() {
                 </div>
               </div>
 
-              {/* Hermes Optimization controls */}
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+              {/* Manual Presets & AI disabled controls */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginBottom: '16px' }}>
                 <button
                   type="button"
                   className="btn"
-                  onClick={handleAskHermesOptimize}
-                  disabled={loadingEnhancement}
+                  onClick={handleApplyChannelPresets}
                   style={{
-                    background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                    background: 'linear-gradient(135deg, #10b981, #059669)',
                     color: '#fff',
                     border: 'none',
                     fontWeight: 600,
@@ -3203,11 +3214,31 @@ function App() {
                     display: 'flex',
                     alignItems: 'center',
                     gap: '6px',
-                    boxShadow: '0 4px 12px rgba(124, 58, 237, 0.25)',
+                    boxShadow: '0 4px 12px rgba(16, 185, 129, 0.25)',
                     transition: 'all 0.2s ease',
                   }}
                 >
-                  {loadingEnhancement ? '🔄 Consulting Hermes AI...' : '✨ Ask Hermes to Optimize'}
+                  📋 Apply Channel Presets
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={true}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text-muted)',
+                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    fontWeight: 600,
+                    padding: '8px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    cursor: 'not-allowed',
+                    transition: 'all 0.2s ease',
+                  }}
+                  title="AI generator is temporarily pending/disabled."
+                >
+                  ✨ AI Optimization Disabled
                 </button>
               </div>
 

@@ -313,7 +313,11 @@ async def enhance_video_metadata(
             )
         logger.info("Hermes AI responded with status_code: %d", resp.status_code)
         if resp.status_code == 200:
-            ai_data = resp.json()
+            try:
+                ai_data = resp.json()
+            except Exception as json_err:
+                logger.error("Hermes AI returned 200 but failed to parse JSON. Raw text: %s", resp.text)
+                raise json_err
             logger.info("Hermes AI response json: %s", json.dumps(ai_data))
             if "choices" in ai_data and len(ai_data["choices"]) > 0:
                 text = ai_data["choices"][0]["message"]["content"]
@@ -611,6 +615,95 @@ async def retry_video(
     upload_video_task.delay(video.id)
     logger.info("celery_upload_task_dispatched_via_retry", video_id=video.id)
     
+    return video
+
+
+@router.post("/{id}/apply-presets", response_model=VideoResponse)
+async def apply_channel_presets(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> VideoResponse:
+    """Reset the video's metadata and settings overrides to match its channel's latest presets/templates."""
+    logger.info("api_apply_channel_presets_called", video_id=id, user_id=current_user.id)
+    
+    stmt = select(Video).where(Video.id == id)
+    res = await db.execute(stmt)
+    video = res.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+        
+    stmt_chan = select(Channel).where(Channel.id == video.channel_id)
+    res_chan = await db.execute(stmt_chan)
+    channel = res_chan.scalar_one()
+    
+    # 1. Regenerate rules-based draft using latest channel templates
+    from app.services.metadata_service import MetadataService
+    metadata_service = MetadataService()
+    draft = metadata_service.generate_draft(video.filename, channel, video.duration_seconds or 0)
+    
+    # 2. Map default category mapping fallback
+    YOUTUBE_CATEGORY_MAP = {
+        "Film & Animation": "1",
+        "Autos & Vehicles": "2",
+        "Music": "10",
+        "Pets & Animals": "15",
+        "Sports": "17",
+        "Travel & Events": "19",
+        "Gaming": "20",
+        "People & Blogs": "22",
+        "Comedy": "23",
+        "Entertainment": "24",
+        "News & Politics": "25",
+        "Howto & Style": "26",
+        "Education": "27",
+        "Science & Technology": "28",
+        "Nonprofits & Activism": "29"
+    }
+    category_id = channel.category_id or YOUTUBE_CATEGORY_MAP.get(channel.genre, "10")
+    
+    # 3. Update the video record
+    video.current_title = draft["title"]
+    video.current_description = draft["description"]
+    video.current_tags = draft["tags"]
+    
+    video.playlist_id = channel.playlist_id
+    video.default_language = channel.default_language
+    video.category_id = category_id
+    video.age_restricted = channel.age_restricted
+    video.ai_generated = channel.ai_generated
+    video.made_for_kids = channel.made_for_kids
+    video.ai_review_note = "Metadata draft reset/applied using latest channel templates."
+    
+    db.add(video)
+    await db.commit()
+    await db.refresh(video)
+    
+    # 4. Update the active MetadataDraft record in the database too
+    stmt_draft = select(MetadataDraft).where(MetadataDraft.video_id == id).order_by(MetadataDraft.version_number.desc())
+    res_draft = await db.execute(stmt_draft)
+    existing_draft = res_draft.scalars().first()
+    
+    if existing_draft:
+        existing_draft.title = draft["title"]
+        existing_draft.description = draft["description"]
+        existing_draft.tags = draft["tags"]
+        existing_draft.confidence_score = draft["confidence_score"]
+        db.add(existing_draft)
+        await db.commit()
+        
+    await _log_video_event(
+        db=db,
+        level=LogLevel.INFO,
+        service="metadata",
+        event_type="video_presets_applied",
+        message=f"Latest channel templates and defaults manual presets applied by user ID {current_user.id}",
+        video_id=video.id,
+        channel_id=video.channel_id,
+        user_id=current_user.id
+    )
+        
+    logger.info("api_channel_presets_applied_successfully", video_id=id)
     return video
 
 
