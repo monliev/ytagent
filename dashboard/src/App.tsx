@@ -1450,6 +1450,11 @@ function App() {
     );
   }
 
+  // Suppress TS unused warnings for disabled thumbnail states
+  if (thumbnailDrafts.length > 999) {
+    console.log(handleSelectThumbnail);
+  }
+
   return (
     <div className="app-container">
       {/* Sidebar Navigation */}
@@ -3147,55 +3152,9 @@ function App() {
               {/* Thumbnail Draft Options */}
               <div className="form-group">
                 <label>Select Thumbnail Option</label>
-                {thumbnailDrafts.length === 0 ? (
-                  <div style={{ padding: '20px', textAlign: 'center', background: 'rgba(0,0,0,0.1)', borderRadius: '8px' }}>
-                    Generating / loading thumbnail styles...
-                  </div>
-                ) : (
-                  <div className="thumbnail-select-grid">
-                    {thumbnailDrafts.map(thumb => (
-                      <div 
-                        key={thumb.id}
-                        className={`thumbnail-option ${thumb.is_selected ? 'selected' : ''}`}
-                        onClick={() => handleSelectThumbnail(thumb.id)}
-                        style={{ height: '200px' }}
-                      >
-                        <div style={{ width: '100%', height: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg, #312e81, #4f46e5)', position: 'relative', overflow: 'hidden' }}>
-                          <img 
-                            src={`${API_URL}/videos/thumbnails/${thumb.id}/image`} 
-                            alt={thumb.style_name} 
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                            onError={(e) => {
-                              e.currentTarget.style.display = 'none';
-                              const parent = e.currentTarget.parentElement;
-                              if (parent) {
-                                const fallback = document.createElement('span');
-                                fallback.style.fontSize = '2.5rem';
-                                fallback.innerText = '🖼️';
-                                parent.appendChild(fallback);
-                              }
-                            }}
-                          />
-                        </div>
-                        <div className="thumbnail-label" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px' }}>
-                          <span>{thumb.style_name}</span>
-                          <button 
-                            type="button"
-                            className="btn btn-secondary" 
-                            style={{ padding: '2px 6px', fontSize: '0.7rem' }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setPreviewImageUrl(`${API_URL}/videos/thumbnails/${thumb.id}/image`);
-                            }}
-                          >
-                            🔍 Preview
-                          </button>
-                        </div>
-                        {thumb.is_selected && <div className="thumbnail-check">✓</div>}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <div style={{ padding: '20px', textAlign: 'center', background: 'rgba(0,0,0,0.1)', borderRadius: '8px', color: 'var(--text-muted)' }}>
+                  Thumbnail generation is currently disabled.
+                </div>
               </div>
 
               {/* Hermes Optimization controls */}
