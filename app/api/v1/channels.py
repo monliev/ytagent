@@ -639,8 +639,9 @@ async def get_channel_analytics(
         end_date = datetime.utcnow().strftime("%Y-%m-%d")
         start_date = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
         
+        youtube_channel_id = getattr(channel, "youtube_channel_id", None) or "MINE"
         response = youtube_analytics.reports().query(
-            ids=f"channel=={channel.youtube_channel_id or 'MINE'}",
+            ids=f"channel=={youtube_channel_id}",
             startDate=start_date,
             endDate=end_date,
             metrics="views,likes,dislikes,estimatedMinutesWatched,averageViewDuration",
