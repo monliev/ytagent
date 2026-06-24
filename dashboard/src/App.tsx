@@ -198,6 +198,7 @@ function App() {
   const [settingsSupervisorId, setSettingsSupervisorId] = useState('');
   const [settingsCfAiUrl, setSettingsCfAiUrl] = useState('');
   const [settingsCfAiToken, setSettingsCfAiToken] = useState('');
+  const [settingsCfAiModel, setSettingsCfAiModel] = useState('');
   const [settingsRecaptchaSiteKey, setSettingsRecaptchaSiteKey] = useState('');
   const [settingsRecaptchaSecretKey, setSettingsRecaptchaSecretKey] = useState('');
   // SFTP / NAS settings
@@ -485,6 +486,7 @@ function App() {
         setSettingsSupervisorId(data.supervisor_telegram_id ? String(data.supervisor_telegram_id) : '');
         setSettingsCfAiUrl(data.cf_ai_url || '');
         setSettingsCfAiToken(data.cf_ai_token || '');
+        setSettingsCfAiModel(data.cf_ai_model || '');
         setSettingsRecaptchaSiteKey(data.recaptcha_site_key || '');
         setSettingsRecaptchaSecretKey(data.recaptcha_secret_key || '');
         setSettingsSftpHost(data.sftp_host || '');
@@ -522,6 +524,7 @@ function App() {
           supervisor_telegram_id: settingsSupervisorId ? parseInt(settingsSupervisorId) : null,
           cf_ai_url: settingsCfAiUrl,
           cf_ai_token: settingsCfAiToken,
+          cf_ai_model: settingsCfAiModel,
           recaptcha_site_key: settingsRecaptchaSiteKey,
           recaptcha_secret_key: settingsRecaptchaSecretKey,
           sftp_host: settingsSftpHost,
@@ -584,7 +587,8 @@ function App() {
         headers: getHeaders(),
         body: JSON.stringify({
           cf_ai_url: settingsCfAiUrl,
-          cf_ai_token: settingsCfAiToken
+          cf_ai_token: settingsCfAiToken,
+          cf_ai_model: settingsCfAiModel
         })
       });
       const data = await res.json();
@@ -2439,6 +2443,17 @@ function App() {
                         value={settingsCfAiToken}
                         onChange={e => setSettingsCfAiToken(e.target.value)}
                         placeholder="••••••••••••••••"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="settings-cf-model">AI Model Name</label>
+                      <input
+                        id="settings-cf-model"
+                        type="text"
+                        className="form-input"
+                        value={settingsCfAiModel}
+                        onChange={e => setSettingsCfAiModel(e.target.value)}
+                        placeholder="hermes"
                       />
                     </div>
                     <button

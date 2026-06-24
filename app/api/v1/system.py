@@ -143,6 +143,8 @@ async def resolve_setting_value(key: str, user_input: str | None, db: AsyncSessi
             return settings.RECAPTCHA_SECRET_KEY
         elif key == "cf_ai_token":
             return settings.CF_AI_TOKEN
+        elif key == "cf_ai_model":
+            return settings.CF_AI_MODEL
     return user_input
 
 
@@ -194,6 +196,7 @@ async def test_telegram_connection(
 class CloudflareTestPayload(BaseModel):
     cf_ai_url: str
     cf_ai_token: Optional[str] = None
+    cf_ai_model: Optional[str] = None
 
 
 @router.post("/test-cloudflare")
@@ -207,11 +210,12 @@ async def test_cloudflare_connection(
         raise HTTPException(status_code=400, detail="Cloudflare AI URL is not configured.")
         
     token = await resolve_setting_value("cf_ai_token", payload.cf_ai_token, db)
+    model = await resolve_setting_value("cf_ai_model", payload.cf_ai_model, db)
     
     try:
         test_url = f"{url.rstrip('/')}/chat/completions"
         test_payload = {
-            "model": "hermes",
+            "model": model or "hermes",
             "messages": [{"role": "user", "content": "ping"}],
             "max_tokens": 5
         }
@@ -234,9 +238,25 @@ async def test_cloudflare_connection(
                 "detail": f"Endpoint responded with HTTP {resp.status_code}."
             }
         else:
+            detail = f"Endpoint responded with HTTP {resp.status_code}: {resp.text[:120]}"
+            # If 404 or model error, try to fetch available models in the proxy
+            if resp.status_code == 404 or "model" in resp.text:
+                try:
+                    models_url = f"{url.rstrip('/')}/models"
+                    async with httpx.AsyncClient() as client:
+                        m_resp = await client.get(models_url, headers=headers, timeout=4.0)
+                    if m_resp.status_code == 200:
+                        m_data = m_resp.json()
+                        if isinstance(m_data, dict) and "data" in m_data:
+                            model_ids = [m.get("id") for m in m_data["data"] if isinstance(m, dict) and m.get("id")]
+                            if model_ids:
+                                detail += f" | Available models in proxy: {', '.join(model_ids)}"
+                except Exception as m_err:
+                    logger.warning("failed_to_fetch_models_during_test_cloudflare", error=str(m_err))
+            
             return {
                 "status": "failed",
-                "detail": f"Endpoint responded with HTTP {resp.status_code}: {resp.text[:100]}"
+                "detail": detail
             }
     except Exception as e:
         return {

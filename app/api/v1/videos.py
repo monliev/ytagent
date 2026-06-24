@@ -239,10 +239,17 @@ async def enhance_video_metadata(
     token_rec = res_token.scalar_one_or_none()
     ai_token = (token_rec.value if token_rec else None) or settings.CF_AI_TOKEN
 
-    logger.info("Loaded AI URL: %s | AI Token loaded: %s (length: %d)", 
+    # Fetch AI Model from db settings, fallback to environment variable config
+    stmt_model = select(SystemSetting).where(SystemSetting.key == "cf_ai_model")
+    res_model = await db.execute(stmt_model)
+    model_rec = res_model.scalar_one_or_none()
+    ai_model = (model_rec.value if model_rec else None) or settings.CF_AI_MODEL
+
+    logger.info("Loaded AI URL: %s | AI Token loaded: %s (length: %d) | AI Model: %s", 
                 ai_url, 
                 "Yes" if ai_token else "No", 
-                len(ai_token) if ai_token else 0)
+                len(ai_token) if ai_token else 0,
+                ai_model)
 
     if not ai_url or "dummy" in ai_url:
         logger.info("Hermes AI is not configured or dummy URL is active. AI URL: %s", ai_url)
@@ -272,7 +279,7 @@ async def enhance_video_metadata(
     try:
         url = f"{ai_url.rstrip('/')}/chat/completions"
         payload = {
-            "model": "hermes",
+            "model": ai_model,
             "messages": [
                 {"role": "system", "content": "You are a professional YouTube SEO strategist named Hermes."},
                 {"role": "user", "content": prompt}

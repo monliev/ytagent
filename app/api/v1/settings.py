@@ -13,7 +13,7 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 KEYS = [
-    "telegram_bot_token", "supervisor_telegram_id", "cf_ai_url", "cf_ai_token",
+    "telegram_bot_token", "supervisor_telegram_id", "cf_ai_url", "cf_ai_token", "cf_ai_model",
     "recaptcha_site_key", "recaptcha_secret_key",
     "sftp_host", "sftp_port", "sftp_user", "sftp_password", "sftp_base_path",
 ]
@@ -63,6 +63,7 @@ async def get_settings(
             "cf_ai_token",
             db_records.get("cf_ai_token") or settings.CF_AI_TOKEN
         ),
+        "cf_ai_model": db_records.get("cf_ai_model") or settings.CF_AI_MODEL,
         "recaptcha_site_key": db_records.get("recaptcha_site_key") or "",
         "recaptcha_secret_key": mask_value(
             "recaptcha_secret_key", db_records.get("recaptcha_secret_key") or ""

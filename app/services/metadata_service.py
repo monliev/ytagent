@@ -152,6 +152,7 @@ class MetadataService:
         # Load AI URL from db settings, fallback to environment variable
         ai_url = settings.CF_AI_URL
         ai_token = settings.CF_AI_TOKEN
+        ai_model = settings.CF_AI_MODEL
         if db is not None:
             try:
                 stmt_setting = select(SystemSetting).where(SystemSetting.key == "cf_ai_url")
@@ -170,6 +171,15 @@ class MetadataService:
                     ai_token = token_rec.value
             except Exception as db_err:
                 logger.warning("failed_to_load_ai_token_from_db_for_drafts", error=str(db_err))
+
+            try:
+                stmt_model = select(SystemSetting).where(SystemSetting.key == "cf_ai_model")
+                res_model = await db.execute(stmt_model)
+                model_rec = res_model.scalar_one_or_none()
+                if model_rec and model_rec.value:
+                    ai_model = model_rec.value
+            except Exception as db_err:
+                logger.warning("failed_to_load_ai_model_from_db_for_drafts", error=str(db_err))
         
         if not ai_url or "dummy" in ai_url:
             logger.info("Hermes AI is not configured or dummy URL is active for drafts. AI URL: %s", ai_url)
@@ -209,7 +219,7 @@ class MetadataService:
         try:
             url = f"{ai_url.rstrip('/')}/chat/completions"
             payload = {
-                "model": "hermes",
+                "model": ai_model,
                 "messages": [
                     {"role": "system", "content": "You are a professional YouTube SEO and growth strategist named Hermes."},
                     {"role": "user", "content": prompt}

@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     # Cloudflare AI
     CF_AI_URL: str = "https://dummy-ai-worker.workers.dev/"
     CF_AI_TOKEN: str = ""
+    CF_AI_MODEL: str = "hermes"
 
     # Encryption (Base64 Fernet Key)
     TOKEN_ENCRYPTION_KEY: str = "mDp_K2tZh0qB3DFvdzhZvJgHJB5_KZAmlt4bIBRIScc="
