@@ -4,10 +4,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+WORKDIR /
 
-RUN pip install --no-cache-dir watchdog requests
+RUN pip install --no-cache-dir watchdog httpx
 
-COPY src/ .
+# Copy src to the correct service folder path to preserve relative import paths
+COPY src/ /services/filewatcher/src/
 
-CMD ["python", "main.py"]
+ENV PYTHONPATH=/
+
+CMD ["python", "-m", "services.filewatcher.src.main"]
