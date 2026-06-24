@@ -1,14 +1,17 @@
+import redis
 import structlog
 from datetime import datetime
 from typing import Optional, Any
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.tasks.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.models import Video, VideoStatus, SystemLog, LogLevel
 from app.services.upload_service_sync import UploadServiceSync
 
 logger = structlog.get_logger()
+redis_sync_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 def _log_event_sync(
     db: Session,
@@ -60,29 +63,16 @@ def upload_video_task(self, video_id: int) -> Optional[str]:
             )
             return None
 
-        # Transition to UPLOADING
-        video.status = VideoStatus.UPLOADING
-        db.add(video)
-        db.commit()
-        
-        _log_event_sync(
-            db=db,
-            level=LogLevel.INFO,
-            service="upload",
-            event_type="upload_started",
-            message=f"Starting YouTube video upload for video ID {video_id}",
-            video_id=video.id,
-            channel_id=video.channel_id
-        )
+        # Concurrency check via Redis lock
+        lock = redis_sync_client.lock("youtube_upload_global_lock", timeout=1800)
+        acquired = lock.acquire(blocking=False)
+        if not acquired:
+            logger.info("celery_upload_lock_busy", video_id=video_id)
+            raise self.retry(countdown=60)
 
         try:
-            uploader = UploadServiceSync()
-            youtube_video_id = uploader.execute_upload(db, video)
-            
-            # Transition to UPLOADED
-            video.status = VideoStatus.UPLOADED
-            video.youtube_video_id = youtube_video_id
-            video.uploaded_at = datetime.utcnow()
+            # Transition to UPLOADING
+            video.status = VideoStatus.UPLOADING
             db.add(video)
             db.commit()
             
@@ -90,54 +80,81 @@ def upload_video_task(self, video_id: int) -> Optional[str]:
                 db=db,
                 level=LogLevel.INFO,
                 service="upload",
-                event_type="upload_success",
-                message=f"Successfully uploaded video to YouTube. YouTube ID: {youtube_video_id}",
+                event_type="upload_started",
+                message=f"Starting YouTube video upload for video ID {video_id}",
                 video_id=video.id,
-                channel_id=video.channel_id,
-                details={"youtube_video_id": youtube_video_id}
+                channel_id=video.channel_id
             )
-            return youtube_video_id
-            
-        except Exception as e:
-            db.rollback()
-            logger.exception("celery_upload_step_failed", video_id=video_id, error=str(e))
-            
-            video.retry_count += 1
-            video.last_error = str(e)
-            
-            if self.request.retries < self.max_retries:
-                # Requeue status back to QUEUED for celery retry
-                video.status = VideoStatus.QUEUED
+
+            try:
+                uploader = UploadServiceSync()
+                youtube_video_id = uploader.execute_upload(db, video)
+                
+                # Transition to UPLOADED
+                video.status = VideoStatus.UPLOADED
+                video.youtube_video_id = youtube_video_id
+                video.uploaded_at = datetime.utcnow()
                 db.add(video)
                 db.commit()
                 
                 _log_event_sync(
                     db=db,
-                    level=LogLevel.WARNING,
+                    level=LogLevel.INFO,
                     service="upload",
-                    event_type="upload_transient_failure",
-                    message=f"Upload failed temporarily: {str(e)}. Retrying ({self.request.retries + 1}/5)...",
-                    video_id=video.id,
-                    channel_id=video.channel_id
-                )
-                
-                # Retry celery task with exponential backoff (e.g. 60s, 120s, 240s...)
-                countdown = 60 * (2 ** self.request.retries)
-                raise self.retry(exc=e, countdown=countdown)
-            else:
-                # Transition to FAILED state
-                video.status = VideoStatus.FAILED
-                db.add(video)
-                db.commit()
-                
-                _log_event_sync(
-                    db=db,
-                    level=LogLevel.CRITICAL,
-                    service="upload",
-                    event_type="upload_failed",
-                    message=f"Upload failed permanently after maximum retries. Error: {str(e)}",
+                    event_type="upload_success",
+                    message=f"Successfully uploaded video to YouTube. YouTube ID: {youtube_video_id}",
                     video_id=video.id,
                     channel_id=video.channel_id,
-                    details={"error": str(e)}
+                    details={"youtube_video_id": youtube_video_id}
                 )
-                return None
+                return youtube_video_id
+                
+            except Exception as e:
+                db.rollback()
+                logger.exception("celery_upload_step_failed", video_id=video_id, error=str(e))
+                
+                video.retry_count += 1
+                video.last_error = str(e)
+                
+                if self.request.retries < self.max_retries:
+                    # Requeue status back to QUEUED for celery retry
+                    video.status = VideoStatus.QUEUED
+                    db.add(video)
+                    db.commit()
+                    
+                    _log_event_sync(
+                        db=db,
+                        level=LogLevel.WARNING,
+                        service="upload",
+                        event_type="upload_transient_failure",
+                        message=f"Upload failed temporarily: {str(e)}. Retrying ({self.request.retries + 1}/5)...",
+                        video_id=video.id,
+                        channel_id=video.channel_id
+                    )
+                    
+                    # Retry celery task with exponential backoff (e.g. 60s, 120s, 240s...)
+                    countdown = 60 * (2 ** self.request.retries)
+                    raise self.retry(exc=e, countdown=countdown)
+                else:
+                    # Transition to FAILED state
+                    video.status = VideoStatus.FAILED
+                    db.add(video)
+                    db.commit()
+                    
+                    _log_event_sync(
+                        db=db,
+                        level=LogLevel.CRITICAL,
+                        service="upload",
+                        event_type="upload_failed",
+                        message=f"Upload failed permanently after maximum retries. Error: {str(e)}",
+                        video_id=video.id,
+                        channel_id=video.channel_id,
+                        details={"error": str(e)}
+                    )
+                    return None
+        finally:
+            try:
+                lock.release()
+                logger.info("celery_upload_lock_released", video_id=video_id)
+            except Exception as le:
+                logger.warning("celery_upload_lock_release_failed", error=str(le))

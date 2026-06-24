@@ -82,3 +82,59 @@ class NotificationService:
         if success:
             logger.info("notify_video_ready_success", video_id=video.id)
         return success
+
+    async def notify_video_auto_approved(self, db: AsyncSession, video: Video) -> bool:
+        """Send a notification for an automatically approved and scheduled video."""
+        logger.info("notify_video_auto_approved_started", video_id=video.id)
+        
+        # Load associated Channel
+        stmt_channel = select(Channel).where(Channel.id == video.channel_id)
+        channel_res = await db.execute(stmt_channel)
+        channel = channel_res.scalar_one()
+
+        # Load latest Metadata Draft
+        stmt_meta = select(MetadataDraft).where(MetadataDraft.video_id == video.id).order_by(MetadataDraft.version_number.desc())
+        meta_res = await db.execute(stmt_meta)
+        metadata_draft = meta_res.scalars().first()
+
+        if not metadata_draft:
+            logger.error("notify_video_auto_approved_no_metadata_draft", video_id=video.id)
+            return False
+
+        # Format scheduled time
+        scheduled_str = video.scheduled_time.strftime("%d-%m-%Y %H:%M WIB") if video.scheduled_time else "Unknown"
+
+        text = (
+            f"🚀 <b>VIDEO AUTO-APPROVED & SCHEDULED</b>\n\n"
+            f"<b>Channel:</b> {channel.name}\n"
+            f"<b>File:</b> {video.filename}\n"
+            f"<b>Title:</b> {metadata_draft.title}\n"
+            f"<b>Scheduled Upload:</b> {scheduled_str}\n\n"
+            f"This video has been automatically processed and placed in the upload queue."
+        )
+
+        reply_markup = {
+            "inline_keyboard": [
+                [
+                    {
+                        "text": "👁️ View on Dashboard", 
+                        "callback_data": f"edit:{video.id}"
+                    }
+                ]
+            ]
+        }
+
+        # Resolve supervisor ID dynamically
+        from app.services.settings_service import get_supervisor_telegram_id_async
+        supervisor_id = await get_supervisor_telegram_id_async(db)
+
+        # Send Telegram notification
+        success = await self.telegram_api.send_message(
+            chat_id=supervisor_id,
+            text=text,
+            reply_markup=reply_markup,
+            db=db
+        )
+        if success:
+            logger.info("notify_video_auto_approved_success", video_id=video.id)
+        return success

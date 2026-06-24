@@ -17,7 +17,7 @@ from app.models.thumbnail_draft import ThumbnailDraft
 from app.models.system_log import SystemLog, LogLevel
 from app.core.redis_client import redis_client
 from app.tasks.upload import upload_video_task
-from app.schemas.video import VideoDetectRequest, VideoResponse, VideoMetadataUpdate, VideoThumbnailSelect, ThumbnailDraftResponse, AIEnhancementResponse
+from app.schemas.video import VideoDetectRequest, VideoResponse, VideoMetadataUpdate, VideoThumbnailSelect, ThumbnailDraftResponse, AIEnhancementResponse, VideoMoveRequest
 from app.services.ingestion_service import IngestionService
 
 logger = structlog.get_logger()
@@ -894,4 +894,93 @@ async def bulk_discard_videos(
     return results
 
 
+@router.post("/{id}/move", response_model=VideoResponse)
+async def move_video_in_queue(
+    id: int,
+    payload: VideoMoveRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> VideoResponse:
+    """Move a video up or down in the scheduled upload queue by swapping scheduled times."""
+    direction = payload.direction
+    if direction not in ("up", "down"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Direction must be either 'up' or 'down'."
+        )
 
+    logger.info("api_move_video_called", video_id=id, direction=direction, user_id=current_user.id)
+
+    # 1. Fetch the video
+    stmt = select(Video).where(Video.id == id)
+    res = await db.execute(stmt)
+    video = res.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+
+    # 2. Check preconditions
+    if video.status not in (VideoStatus.APPROVED, VideoStatus.QUEUED):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Video is in status '{video.status}' and cannot be reordered."
+        )
+
+    if not video.scheduled_time:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Video does not have a scheduled time set."
+        )
+
+    # 3. Retrieve all approved/queued videos for the same channel, sorted by scheduled_time asc
+    stmt_queue = select(Video).where(
+        Video.channel_id == video.channel_id,
+        Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED]),
+        Video.scheduled_time.is_not(None)
+    ).order_by(Video.scheduled_time.asc())
+    res_queue = await db.execute(stmt_queue)
+    queue = res_queue.scalars().all()
+
+    # 4. Find the video in the queue list
+    try:
+        idx = next(i for i, v in enumerate(queue) if v.id == video.id)
+    except StopIteration:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Video is not in the channel scheduling queue."
+        )
+
+    # 5. Swap logic
+    # "up" moves the item earlier in the queue, i.e., index idx swaps with idx - 1.
+    # "down" moves the item later in the queue, i.e., index idx swaps with idx + 1.
+    target_idx = idx - 1 if direction == "up" else idx + 1
+
+    if 0 <= target_idx < len(queue):
+        adjacent_video = queue[target_idx]
+
+        # Swap times
+        temp_time = video.scheduled_time
+        video.scheduled_time = adjacent_video.scheduled_time
+        adjacent_video.scheduled_time = temp_time
+
+        db.add(video)
+        db.add(adjacent_video)
+        
+        await _log_video_event(
+            db=db,
+            level=LogLevel.INFO,
+            service="queue",
+            event_type="video_queue_reordered",
+            message=f"Video ID {video.id} reordered {direction} in queue. Swapped schedule time with video ID {adjacent_video.id}.",
+            video_id=video.id,
+            channel_id=video.channel_id,
+            user_id=current_user.id,
+            details={"direction": direction, "swapped_with_video_id": adjacent_video.id}
+        )
+        
+        await db.commit()
+        await db.refresh(video)
+        logger.info("api_move_video_success", video_id=id, new_scheduled_time=str(video.scheduled_time))
+    else:
+        logger.warning("api_move_video_noop", video_id=id, direction=direction, idx=idx, queue_length=len(queue))
+
+    return video

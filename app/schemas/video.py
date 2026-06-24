@@ -83,3 +83,8 @@ class AIEnhancementResponse(BaseModel):
     tags: List[str]
 
 
+class VideoMoveRequest(BaseModel):
+    """Schema for moving a video up or down in the scheduling queue."""
+    direction: str = Field(..., description="The direction to move the video: 'up' or 'down'")
+
+

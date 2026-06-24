@@ -390,6 +390,17 @@ function App() {
     }
   }, [token, selectedChannelId, logPage, logLevelFilter, logServiceFilter]);
 
+  // Sync settings and analytics selection with sidebar master dropdown selection
+  useEffect(() => {
+    if (selectedChannelId !== 'all') {
+      setSelectedSettingsChannelId(selectedChannelId);
+      setSelectedAnalyticsChannelId(selectedChannelId);
+    } else {
+      setSelectedSettingsChannelId('');
+      setSelectedAnalyticsChannelId(null);
+    }
+  }, [selectedChannelId]);
+
   // Load settings when tab is set to settings, and load projects when channel changes
   useEffect(() => {
     if (token && currentTab === 'settings') {
@@ -418,12 +429,9 @@ function App() {
     if (token && currentTab === 'analytics') {
       if (selectedAnalyticsChannelId) {
         fetchAnalytics(selectedAnalyticsChannelId);
-      } else if (channels.length > 0) {
-        setSelectedAnalyticsChannelId(channels[0].id);
-        fetchAnalytics(channels[0].id);
       }
     }
-  }, [token, currentTab, selectedAnalyticsChannelId, channels]);
+  }, [token, currentTab, selectedAnalyticsChannelId]);
 
   // Listen for OAuth success/fail messages from callback popup
   useEffect(() => {
@@ -1043,6 +1051,29 @@ function App() {
       }
     } catch (e) {
       triggerToast('Network error applying presets.', 'error');
+    }
+  };
+
+
+  const moveVideoInQueue = async (id: number, direction: 'up' | 'down') => {
+    try {
+      const res = await fetch(`${API_URL}/videos/${id}/move`, {
+        method: 'POST',
+        headers: {
+          ...getHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ direction }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast(`Video moved successfully.`, 'success');
+        refreshAllData();
+      } else {
+        triggerToast(`Failed to move video: ${data.detail || 'Unknown error'}`, 'error');
+      }
+    } catch (err) {
+      triggerToast('Error updating video queue position.', 'error');
     }
   };
 
@@ -1899,8 +1930,10 @@ function App() {
                 <thead>
                   <tr>
                     <th>ID</th>
+                    <th>No. Antrean</th>
                     <th>Video Title</th>
                     <th>Size</th>
+                    <th>Jadwal Upload</th>
                     <th>Privacy</th>
                     <th>Queue Status</th>
                     <th>Retries</th>
@@ -1909,37 +1942,114 @@ function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {videos.filter(v => v.status !== 'staging' && v.status !== 'detected' && v.status !== 'discarded').map(video => (
-                    <tr key={video.id}>
-                      <td>{video.id}</td>
-                      <td style={{ fontWeight: 600 }}>{video.current_title || video.filename}</td>
-                      <td>{(video.file_size_bytes / (1024*1024)).toFixed(1)} MB</td>
-                      <td style={{ textTransform: 'capitalize' }}>{video.youtube_privacy}</td>
-                      <td>
-                        <span className={`status-badge badge-${video.status}`}>
-                          {video.status}
-                        </span>
-                      </td>
-                      <td>{video.retry_count}</td>
-                      <td style={{ fontSize: '0.8rem', color: 'var(--danger)', maxWidth: '250px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={video.last_error || ''}>
-                        {video.last_error || '-'}
-                      </td>
-                      <td>
-                        {['failed', 'error'].includes(video.status) && (
-                          <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => openEditModal(video)}>
-                            ✏️ Review / Retry
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                  {videos.filter(v => v.status !== 'staging' && v.status !== 'detected' && v.status !== 'discarded').length === 0 && (
-                    <tr>
-                      <td colSpan={8} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
-                        No videos currently in processing queue.
-                      </td>
-                    </tr>
-                  )}
+                  {(() => {
+                    const queueFiltered = videos.filter(v => v.status !== 'staging' && v.status !== 'detected' && v.status !== 'discarded');
+                    
+                    // Separate and sort:
+                    const uploading = queueFiltered.filter(v => v.status === 'uploading');
+                    const scheduled = queueFiltered.filter(v => v.status === 'approved' || v.status === 'queued')
+                      .sort((a, b) => {
+                        const timeA = a.scheduled_time ? new Date(a.scheduled_time).getTime() : 0;
+                        const timeB = b.scheduled_time ? new Date(b.scheduled_time).getTime() : 0;
+                        return timeA - timeB;
+                      });
+                    const others = queueFiltered.filter(v => v.status !== 'uploading' && v.status !== 'approved' && v.status !== 'queued')
+                      .sort((a, b) => b.id - a.id);
+
+                    const allQueueItems = [...uploading, ...scheduled, ...others];
+                    
+                    if (allQueueItems.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={10} style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
+                            No videos currently in processing queue.
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return allQueueItems.map((video) => {
+                      // Determine "No. Antrean"
+                      let queueNo = '-';
+                      if (video.status === 'uploading') {
+                        queueNo = '⚡ Active';
+                      } else if (video.status === 'approved' || video.status === 'queued') {
+                        const idx = scheduled.findIndex(v => v.id === video.id);
+                        if (idx !== -1) {
+                          queueNo = `${idx + 1}`;
+                        }
+                      }
+                      
+                      // Format scheduled time
+                      let scheduledStr = '-';
+                      if (video.scheduled_time) {
+                        try {
+                          const dt = new Date(video.scheduled_time);
+                          const pad = (n: number) => n.toString().padStart(2, '0');
+                          scheduledStr = `${pad(dt.getDate())}-${pad(dt.getMonth() + 1)}-${dt.getFullYear()} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+                        } catch (e) {
+                          scheduledStr = video.scheduled_time;
+                        }
+                      }
+
+                      // Check if video is move-up-able or move-down-able
+                      const isScheduled = video.status === 'approved' || video.status === 'queued';
+                      const schedIdx = isScheduled ? scheduled.findIndex(v => v.id === video.id) : -1;
+                      const canMoveUp = isScheduled && schedIdx > 0;
+                      const canMoveDown = isScheduled && schedIdx < scheduled.length - 1 && schedIdx !== -1;
+
+                      return (
+                        <tr key={video.id}>
+                          <td>{video.id}</td>
+                          <td>{queueNo}</td>
+                          <td style={{ fontWeight: 600 }}>{video.current_title || video.filename}</td>
+                          <td>{(video.file_size_bytes / (1024*1024)).toFixed(1)} MB</td>
+                          <td>{scheduledStr}</td>
+                          <td style={{ textTransform: 'capitalize' }}>{video.youtube_privacy}</td>
+                          <td>
+                            <span className={`status-badge badge-${video.status}`}>
+                              {video.status}
+                            </span>
+                          </td>
+                          <td>{video.retry_count}</td>
+                          <td style={{ fontSize: '0.8rem', color: 'var(--danger)', maxWidth: '250px', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={video.last_error || ''}>
+                            {video.last_error || '-'}
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                              {['failed', 'error'].includes(video.status) && (
+                                <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => openEditModal(video)}>
+                                  ✏️ Review / Retry
+                                </button>
+                              )}
+                              {isScheduled && (
+                                <>
+                                  <button 
+                                    className="btn btn-secondary" 
+                                    style={{ padding: '4px 8px', fontSize: '0.85rem', opacity: canMoveUp ? 1 : 0.4, cursor: canMoveUp ? 'pointer' : 'not-allowed' }} 
+                                    disabled={!canMoveUp} 
+                                    onClick={() => moveVideoInQueue(video.id, 'up')}
+                                    title="Move Up"
+                                  >
+                                    ⬆️
+                                  </button>
+                                  <button 
+                                    className="btn btn-secondary" 
+                                    style={{ padding: '4px 8px', fontSize: '0.85rem', opacity: canMoveDown ? 1 : 0.4, cursor: canMoveDown ? 'pointer' : 'not-allowed' }} 
+                                    disabled={!canMoveDown} 
+                                    onClick={() => moveVideoInQueue(video.id, 'down')}
+                                    title="Move Down"
+                                  >
+                                    ⬇️
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -2004,26 +2114,14 @@ function App() {
                     {syncingAnalytics ? '🔄 Syncing...' : '🔄 Sync Now'}
                   </button>
                 )}
-                <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Select Channel:</label>
-                <select 
-                  className="form-input" 
-                  style={{ width: '200px', marginTop: 0 }} 
-                  value={selectedAnalyticsChannelId || ''} 
-                  onChange={e => {
-                    const val = e.target.value ? Number(e.target.value) : null;
-                    setSelectedAnalyticsChannelId(val);
-                    if (val) fetchAnalytics(val);
-                  }}
-                >
-                  <option value="">-- Choose Channel --</option>
-                  {channels.map(c => (
-                    <option key={c.id} value={c.id}>{c.name}</option>
-                  ))}
-                </select>
               </div>
             </div>
 
-            {loadingAnalytics ? (
+            {!selectedAnalyticsChannelId ? (
+              <div style={{ padding: '80px 20px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)' }}>
+                Please select a channel in the sidebar dropdown to view analytics.
+              </div>
+            ) : loadingAnalytics ? (
               <div className="spinner-container" style={{ padding: '80px 20px' }}>
                 <h2>Loading analytics reports...</h2>
               </div>
@@ -2682,20 +2780,14 @@ function App() {
                   </details>
                 </div>
 
-                <div className="form-group" style={{ marginBottom: '16px' }}>
-                  <label htmlFor="settings-channel-select">Select Target Channel</label>
-                  <select
-                    id="settings-channel-select"
-                    className="form-input"
-                    value={selectedSettingsChannelId}
-                    onChange={e => setSelectedSettingsChannelId(e.target.value ? parseInt(e.target.value) : '')}
-                  >
-                    <option value="">-- Choose a Channel --</option>
-                    {channels.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
+                {selectedSettingsChannelId && (
+                  <div style={{ padding: '8px 12px', borderRadius: '6px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-secondary)', alignSelf: 'flex-start' }}>
+                    <span>Target Channel Context:</span>
+                    <strong style={{ color: 'var(--primary)' }}>
+                      {channels.find(c => c.id === selectedSettingsChannelId)?.name || `ID: ${selectedSettingsChannelId}`}
+                    </strong>
+                  </div>
+                )}
 
                 {selectedSettingsChannelId ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -3109,7 +3201,7 @@ function App() {
                   </div>
                 ) : (
                   <div style={{ padding: '40px 20px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)' }}>
-                    Select a channel above to configure its GCP Projects and OAuth credentials.
+                    Please select a channel in the sidebar dropdown to manage credentials and GCP projects.
                   </div>
                 )}
               </div>
