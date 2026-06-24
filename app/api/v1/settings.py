@@ -82,14 +82,18 @@ async def update_settings(
     """Update global settings."""
     logger.info("api_update_settings_called", user_id=current_user.id)
 
+    import json
     updates = payload.model_dump(exclude_unset=True)
+    logger.info("Incoming settings update payload: %s", json.dumps({k: mask_value(k, str(v)) for k, v in updates.items()}))
 
     for key, new_val in updates.items():
         if new_val is None:
+            logger.info("Setting %s is None, skipping", key)
             continue
         # Skip if placeholder mask was posted back
         if isinstance(new_val, str) and new_val != "":
             if set(new_val) <= {"*"} or (key in SENSITIVE_KEYS and new_val.startswith("****") and "*" in new_val):
+                logger.info("Setting %s matches mask placeholder (%s), skipping overwrite", key, new_val)
                 continue
 
         stmt = select(SystemSetting).where(SystemSetting.key == key)
@@ -98,13 +102,15 @@ async def update_settings(
 
         val_str = str(new_val)
         if record:
+            logger.info("Updating existing setting in DB: %s = %s (previously: %s)", key, mask_value(key, val_str), mask_value(key, record.value))
             record.value = val_str
         else:
+            logger.info("Inserting new setting in DB: %s = %s", key, mask_value(key, val_str))
             record = SystemSetting(key=key, value=val_str)
             db.add(record)
 
     await db.commit()
-    logger.info("api_settings_updated", user_id=current_user.id)
+    logger.info("api_settings_updated_successfully", user_id=current_user.id)
     return await get_settings(db, current_user)
 
 
