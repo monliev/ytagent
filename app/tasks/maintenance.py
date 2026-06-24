@@ -457,3 +457,108 @@ def send_daily_hermes_report() -> dict:
     return {"status": "complete", "reports_sent": len(reports_sent), "channels": reports_sent}
 
 
+@celery_app.task(name="app.tasks.maintenance.auto_patrol_queue_integrity")
+def auto_patrol_queue_integrity() -> dict:
+    """
+    Patrol task to scan all APPROVED and QUEUED videos.
+    If a video file is missing on OMV:
+    1. Mark video status as ERROR.
+    2. Log the event.
+    3. Send Telegram alert to supervisor.
+    4. Auto-shift the scheduled_time of all subsequent videos in the channel's queue.
+    """
+    from app.utils.telegram_api import object_telegram_api
+    from app.core.config import settings
+    import asyncio
+
+    missing_count = 0
+    shifted_videos = []
+
+    with SessionLocal() as db:
+        # Fetch all approved and queued videos that have a scheduled time
+        videos = (
+            db.query(Video)
+            .filter(
+                Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED]),
+                Video.scheduled_time.is_not(None)
+            )
+            .order_by(Video.scheduled_time.asc())
+            .all()
+        )
+
+        for video in videos:
+            # Check if file path exists
+            if not os.path.exists(video.file_path):
+                # Detected missing file!
+                missing_count += 1
+                orig_scheduled_time = video.scheduled_time
+                channel_id = video.channel_id
+                
+                # 1. Update video status
+                video.status = VideoStatus.ERROR
+                video.last_error = f"File missing from OMV path: {video.file_path}"
+                db.add(video)
+                db.commit()
+
+                # 2. Log event
+                _log(db, LogLevel.ERROR, "maintenance", "queue_file_missing",
+                     f"Video ID {video.id} file is missing from OMV. Removed from active queue and marked as ERROR.",
+                     video_id=video.id, channel_id=channel_id)
+
+                # 3. Fetch remaining approved/queued videos scheduled AFTER this video
+                stmt_subsequent = (
+                    db.query(Video)
+                    .filter(
+                        Video.channel_id == channel_id,
+                        Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED]),
+                        Video.scheduled_time > orig_scheduled_time
+                    )
+                    .order_by(Video.scheduled_time.asc())
+                    .all()
+                )
+
+                # 4. Auto-shift scheduled times:
+                # Video_k scheduled time becomes the scheduled_time of the video that was scheduled right before it!
+                # We start with the original scheduled time of the deleted video as the target slot.
+                next_slot = orig_scheduled_time
+                for sub_video in stmt_subsequent:
+                    old_time = sub_video.scheduled_time
+                    sub_video.scheduled_time = next_slot
+                    db.add(sub_video)
+                    shifted_videos.append({"id": sub_video.id, "from": str(old_time), "to": str(next_slot)})
+                    next_slot = old_time
+                
+                db.commit()
+
+                # 5. Send Telegram alert
+                alert_msg = (
+                    f"⚠️ <b>WARNING: OMV FILE MISSING</b>\n\n"
+                    f"Video file was deleted or missing from OMV mount.\n"
+                    f"<b>ID:</b> <code>{video.id}</code>\n"
+                    f"<b>Title:</b> {video.current_title or video.filename}\n"
+                    f"<b>Missing Path:</b> <code>{video.file_path}</code>\n\n"
+                    f"This video has been marked as <b>ERROR</b> and removed from queue. "
+                    f"Subsequent upload schedules for this channel have been automatically shifted up by 1 slot."
+                )
+
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(object_telegram_api.send_message(
+                            chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                            text=alert_msg
+                        ))
+                    else:
+                        asyncio.run(object_telegram_api.send_message(
+                            chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                            text=alert_msg
+                        ))
+                except Exception as tg_err:
+                    logger.error("failed_to_send_telegram_missing_file_alert", error=str(tg_err))
+
+    return {
+        "status": "complete",
+        "missing_videos_detected": missing_count,
+        "shifted_videos_count": len(shifted_videos),
+        "shifted_videos": shifted_videos
+    }

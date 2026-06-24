@@ -66,6 +66,11 @@ celery_app.conf.update(
             "task": "app.tasks.maintenance.send_daily_hermes_report",
             "schedule": crontab(hour=8, minute=0),
         },
+        # Every 5 minutes: Scan for missing OMV files in approved/queued status and auto-shift queue
+        "auto-patrol-queue-integrity": {
+            "task": "app.tasks.maintenance.auto_patrol_queue_integrity",
+            "schedule": 300.0,
+        },
     },
 )
 
