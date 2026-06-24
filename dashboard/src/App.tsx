@@ -233,6 +233,7 @@ function App() {
   // UI Toast and loading indicators
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [patrollingQueue, setPatrollingQueue] = useState(false);
 
   const triggerToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -1078,6 +1079,34 @@ function App() {
   };
 
 
+  const triggerQueueIntegrityPatrol = async () => {
+    setPatrollingQueue(true);
+    try {
+      const res = await fetch(`${API_URL}/videos/patrol`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const detected = data.missing_videos_detected || 0;
+        const shifted = data.shifted_videos_count || 0;
+        if (detected > 0) {
+          triggerToast(`Scan complete: Detected ${detected} missing video(s) and auto-shifted ${shifted} slot(s).`, 'error');
+        } else {
+          triggerToast('Scan complete: All files are intact. No changes made.', 'success');
+        }
+        refreshAllData();
+      } else {
+        triggerToast(data.detail || 'Failed to scan queue integrity.', 'error');
+      }
+    } catch (err) {
+      triggerToast('Error connecting to system patrol API.', 'error');
+    } finally {
+      setPatrollingQueue(false);
+    }
+  };
+
+
   const handleApproveVideo = async (videoId: number) => {
     try {
       const res = await fetch(`${API_URL}/videos/${videoId}/approve`, {
@@ -1900,11 +1929,19 @@ function App() {
         {/* Tab 3: Queue Manager */}
         {currentTab === 'queue' && (
           <div>
-            <div className="page-header">
+            <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
               <div className="page-title-group">
                 <h1>Background Queue Manager</h1>
                 <p>Track Celery worker sequential upload execution progress and error history</p>
               </div>
+              <button 
+                className="btn btn-secondary" 
+                onClick={triggerQueueIntegrityPatrol}
+                disabled={patrollingQueue}
+                style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}
+              >
+                {patrollingQueue ? '🔍 Patrolling...' : '🔍 Scan Queue Integrity'}
+              </button>
             </div>
 
             {/* Active upload progress bar mockup */}

@@ -984,3 +984,21 @@ async def move_video_in_queue(
         logger.warning("api_move_video_noop", video_id=id, direction=direction, idx=idx, queue_length=len(queue))
 
     return video
+
+
+@router.post("/patrol", status_code=status.HTTP_200_OK)
+async def force_queue_patrol(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Force run the queue file integrity patrol and scheduler auto-shift."""
+    logger.info("api_force_queue_patrol_called", user_id=current_user.id)
+    
+    # Import the function from tasks
+    from app.tasks.maintenance import auto_patrol_queue_integrity
+    import asyncio
+    
+    # Run the patrol synchronously in a worker thread to prevent blocking
+    result = await asyncio.to_thread(auto_patrol_queue_integrity)
+    
+    return result
