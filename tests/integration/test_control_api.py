@@ -704,4 +704,116 @@ async def test_channel_oauth_status_and_disconnect(db_session):
         await db_check.commit()
 
 
+@pytest.mark.asyncio
+async def test_hybrid_settings_and_ai_enhancement(db_session):
+    # 1. Seed user and channel with hybrid settings
+    user = User(
+        telegram_id=987654321,
+        username="test_hybrid_usr",
+        full_name="Hybrid Admin",
+        role=UserRole.SUPERVISOR,
+        hashed_password=hash_password("pass123"),
+        is_active=True
+    )
+    channel = Channel(
+        name="Test_Ch_Hybrid",
+        genre="gaming",
+        folder_path="/mnt/nas/Test_Ch_Hybrid",
+        preferred_time="10:00:00",
+        is_active=True,
+        playlist_id="PL_HYBRID_DEFAULT",
+        default_language="en",
+        age_restricted=False,
+        ai_generated=False,
+        category_id="20",
+        made_for_kids=False
+    )
+    db_session.add_all([user, channel])
+    await db_session.commit()
+    await db_session.refresh(user)
+    await db_session.refresh(channel)
+
+    # 2. Seed Video associated with this channel
+    video = Video(
+        channel_id=channel.id,
+        filename="hybrid_test_video.mp4",
+        file_path="/mnt/nas/Test_Ch_Hybrid/hybrid_test_video.mp4",
+        file_size_bytes=2000000,
+        status=VideoStatus.STAGING,
+        youtube_privacy=YoutubePrivacy.PRIVATE,
+        playlist_id="PL_HYBRID_DEFAULT",
+        default_language="en",
+        age_restricted=False,
+        ai_generated=False,
+        category_id="20",
+        made_for_kids=False,
+        ai_review_note="Looks good, try high contrast thumbnail."
+    )
+    db_session.add(video)
+    await db_session.commit()
+    await db_session.refresh(video)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        login_res = await ac.post("/api/v1/auth/login", json={
+            "username": "test_hybrid_usr",
+            "password": "pass123"
+        })
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Test A: Update video metadata with overrides
+        payload = {
+            "title": "Optimized Gaming Video Title",
+            "description": "Engaging description context.",
+            "tags": ["gaming", "test"],
+            "playlist_id": "PL_HYBRID_OVERRIDE",
+            "default_language": "id",
+            "category_id": "1",
+            "age_restricted": True,
+            "ai_generated": True,
+            "made_for_kids": True
+        }
+        res_update = await ac.put(f"/api/v1/videos/{video.id}/metadata", json=payload, headers=headers)
+        assert res_update.status_code == 200
+        data = res_update.json()
+        assert data["current_title"] == "Optimized Gaming Video Title"
+        assert data["playlist_id"] == "PL_HYBRID_OVERRIDE"
+        assert data["default_language"] == "id"
+        assert data["category_id"] == "1"
+        assert data["age_restricted"] is True
+        assert data["ai_generated"] is True
+        assert data["made_for_kids"] is True
+
+        # Test B: Trigger AI enhance endpoint (fallback/stub check)
+        res_enhance = await ac.post(f"/api/v1/videos/{video.id}/enhance", headers=headers)
+        assert res_enhance.status_code == 200
+        enhance_data = res_enhance.json()
+        assert "titles" in enhance_data
+        assert "description" in enhance_data
+        assert "tags" in enhance_data
+        assert len(enhance_data["titles"]) >= 1
+
+    # 3. Verify in database
+    async with AsyncSessionLocal() as db_check:
+        stmt = select(Video).where(Video.id == video.id)
+        res = await db_check.execute(stmt)
+        v_check = res.scalar_one()
+        assert v_check.current_title == "Optimized Gaming Video Title"
+        assert v_check.playlist_id == "PL_HYBRID_OVERRIDE"
+        assert v_check.default_language == "id"
+        assert v_check.category_id == "1"
+        assert v_check.age_restricted is True
+        assert v_check.ai_generated is True
+        assert v_check.made_for_kids is True
+
+        # Cleanup
+        await db_check.delete(v_check)
+        stmt_ch = select(Channel).where(Channel.id == channel.id)
+        ch_res = await db_check.execute(stmt_ch)
+        await db_check.delete(ch_res.scalar_one())
+        await db_check.commit()
+
+
+
 

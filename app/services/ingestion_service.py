@@ -94,13 +94,39 @@ class IngestionService:
             )
             return existing_video
 
+        # Map channel category/genre to YouTube category ID
+        YOUTUBE_CATEGORY_MAP = {
+            "Film & Animation": "1",
+            "Autos & Vehicles": "2",
+            "Music": "10",
+            "Pets & Animals": "15",
+            "Sports": "17",
+            "Travel & Events": "19",
+            "Gaming": "20",
+            "People & Blogs": "22",
+            "Comedy": "23",
+            "Entertainment": "24",
+            "News & Politics": "25",
+            "Howto & Style": "26",
+            "Education": "27",
+            "Science & Technology": "28",
+            "Nonprofits & Activism": "29"
+        }
+        category_id = channel.category_id or YOUTUBE_CATEGORY_MAP.get(channel.genre, "10")
+
         # 3. Create Video Entry in DETECTED state
         video = Video(
             channel_id=channel.id,
             filename=filename,
             file_path=file_path,
             file_size_bytes=file_size_bytes,
-            status=VideoStatus.DETECTED
+            status=VideoStatus.DETECTED,
+            playlist_id=channel.playlist_id,
+            default_language=channel.default_language,
+            age_restricted=channel.age_restricted,
+            ai_generated=channel.ai_generated,
+            category_id=category_id,
+            made_for_kids=channel.made_for_kids
         )
         db.add(video)
         await db.commit()
@@ -148,7 +174,7 @@ class IngestionService:
 
             # C. Generate metadata draft
             logger.info("generating_metadata_draft", video_id=video.id)
-            draft_data = self.metadata_service.generate_draft(
+            draft_data = self.metadata_service.generate_ai_draft(
                 filename=filename,
                 channel=channel,
                 duration_seconds=video.duration_seconds or 0
@@ -170,6 +196,7 @@ class IngestionService:
             video.current_title = draft_data["title"]
             video.current_description = draft_data["description"]
             video.current_tags = draft_data["tags"]
+            video.ai_review_note = draft_data.get("ai_review_note")
             db.add(video)
             await db.flush()
 

@@ -17,7 +17,7 @@ from app.models.thumbnail_draft import ThumbnailDraft
 from app.models.system_log import SystemLog, LogLevel
 from app.core.redis_client import redis_client
 from app.tasks.upload import upload_video_task
-from app.schemas.video import VideoDetectRequest, VideoResponse, VideoMetadataUpdate, VideoThumbnailSelect, ThumbnailDraftResponse
+from app.schemas.video import VideoDetectRequest, VideoResponse, VideoMetadataUpdate, VideoThumbnailSelect, ThumbnailDraftResponse, AIEnhancementResponse
 from app.services.ingestion_service import IngestionService
 
 logger = structlog.get_logger()
@@ -162,6 +162,21 @@ async def update_video_metadata(
     video.current_title = payload.title
     video.current_description = payload.description
     video.current_tags = payload.tags
+    
+    # Save hybrid overrides
+    if payload.playlist_id is not None:
+        video.playlist_id = payload.playlist_id
+    if payload.default_language is not None:
+        video.default_language = payload.default_language
+    if payload.age_restricted is not None:
+        video.age_restricted = payload.age_restricted
+    if payload.ai_generated is not None:
+        video.ai_generated = payload.ai_generated
+    if payload.category_id is not None:
+        video.category_id = payload.category_id
+    if payload.made_for_kids is not None:
+        video.made_for_kids = payload.made_for_kids
+
     db.add(video)
     await db.commit()
     await db.refresh(video)
@@ -179,6 +194,86 @@ async def update_video_metadata(
     )
     
     return video
+
+
+@router.post("/{id}/enhance", response_model=AIEnhancementResponse)
+async def enhance_video_metadata(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> AIEnhancementResponse:
+    """Enhance and optimize Title and Description using Cloudflare AI LLM."""
+    logger.info("api_enhance_metadata_called", video_id=id, user_id=current_user.id)
+    
+    # 1. Fetch Video and its Channel
+    stmt = select(Video).where(Video.id == id)
+    res = await db.execute(stmt)
+    video = res.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+        
+    stmt_chan = select(Channel).where(Channel.id == video.channel_id)
+    res_chan = await db.execute(stmt_chan)
+    channel = res_chan.scalar_one()
+
+    default_response = AIEnhancementResponse(
+        titles=[video.current_title or video.filename],
+        description=video.current_description or "",
+        tags=video.current_tags or []
+    )
+
+    from app.core.config import settings
+    import httpx
+    import json
+
+    if not settings.CF_AI_URL or "dummy" in settings.CF_AI_URL:
+        return default_response
+
+    prompt = f"""
+    You are Hermes, a professional YouTube SEO strategist.
+    Optimize the metadata for this video:
+    Channel Name: {channel.name}
+    Channel Niche/Genre: {channel.genre}
+    Current Title: {video.current_title or video.filename}
+    Current Description: {video.current_description or ''}
+    Current Tags: {', '.join(video.current_tags or [])}
+
+    Your tasks:
+    1. Generate exactly 3 highly clickable, optimized alternative Title variations (each maximum 100 characters) in Indonesian.
+    2. Rewrite/enhance the video Description to make it more engaging and optimized for YouTube's SEO algorithm. Keep it in Indonesian, include a hook, summary, and relevant tags.
+    3. Generate a refined list of 10-15 Tags (keywords) to boost search discovery.
+
+    Format your output strictly as a JSON object:
+    {{
+      "titles": ["Variation 1", "Variation 2", "Variation 3"],
+      "description": "...",
+      "tags": ["tag1", "tag2", ...]
+    }}
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                settings.CF_AI_URL,
+                json={"prompt": prompt, "system_instruction": "You are a professional YouTube SEO strategist named Hermes."},
+                timeout=12.0
+            )
+        if resp.status_code == 200:
+            ai_data = resp.json()
+            if "response" in ai_data:
+                text = ai_data["response"]
+                start_idx = text.find("{")
+                end_idx = text.rfind("}")
+                if start_idx != -1 and end_idx != -1:
+                    parsed = json.loads(text[start_idx:end_idx+1])
+                    return AIEnhancementResponse(
+                        titles=[t[:100] for t in parsed.get("titles", []) if t][:3] or default_response.titles,
+                        description=parsed.get("description", default_response.description),
+                        tags=parsed.get("tags", default_response.tags)[:15]
+                    )
+    except Exception as e:
+        logger.warning("cf_ai_enhance_metadata_failed", video_id=video.id, error=str(e))
+        
+    return default_response
 
 @router.get("/{id}/thumbnails", response_model=List[ThumbnailDraftResponse])
 async def get_video_thumbnails(

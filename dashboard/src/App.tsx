@@ -48,6 +48,13 @@ interface Video {
   current_tags: string[] | null;
   is_favorite: boolean;
   notes: string | null;
+  playlist_id: string | null;
+  default_language: string | null;
+  age_restricted: boolean;
+  ai_generated: boolean;
+  category_id: string;
+  made_for_kids: boolean;
+  ai_review_note: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -78,6 +85,11 @@ interface Channel {
   thumbnail_style_name: string | null;
   thumbnail_style_prompt: string | null;
   gcp_project_id: string | null;
+  playlist_id: string | null;
+  default_language: string | null;
+  age_restricted: boolean;
+  ai_generated: boolean;
+  category_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -134,6 +146,26 @@ function App() {
   const [chanTags, setChanTags] = useState('');
   const [chanThumbStyle, setChanThumbStyle] = useState('');
   const [chanThumbPrompt, setChanThumbPrompt] = useState('');
+
+  // New Channel Settings form states
+  const [chanPlaylistId, setChanPlaylistId] = useState('');
+  const [chanDefaultLanguage, setChanDefaultLanguage] = useState('');
+  const [chanAgeRestricted, setChanAgeRestricted] = useState(false);
+  const [chanAiGenerated, setChanAiGenerated] = useState(false);
+  const [chanCategoryId, setChanCategoryId] = useState('');
+  const [chanMadeForKids, setChanMadeForKids] = useState(false);
+
+  // New Video Staging overrides form states
+  const [editPlaylistId, setEditPlaylistId] = useState('');
+  const [editDefaultLanguage, setEditDefaultLanguage] = useState('');
+  const [editCategoryId, setEditCategoryId] = useState('');
+  const [editAgeRestricted, setEditAgeRestricted] = useState(false);
+  const [editAiGenerated, setEditAiGenerated] = useState(false);
+  const [editMadeForKids, setEditMadeForKids] = useState(false);
+
+  // Hermes AI Enhancement states
+  const [aiEnhancedData, setAiEnhancedData] = useState<{ titles: string[], description: string, tags: string[] } | null>(null);
+  const [loadingEnhancement, setLoadingEnhancement] = useState(false);
 
   // Secondary Features state
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
@@ -901,6 +933,14 @@ function App() {
     setEditTitle(video.current_title || '');
     setEditDesc(video.current_description || '');
     setEditTags((video.current_tags || []).join(', '));
+    setEditPlaylistId(video.playlist_id || '');
+    setEditDefaultLanguage(video.default_language || '');
+    setEditCategoryId(video.category_id || '10');
+    setEditAgeRestricted(video.age_restricted || false);
+    setEditAiGenerated(video.ai_generated || false);
+    setEditMadeForKids(video.made_for_kids || false);
+    setAiEnhancedData(null);
+    setLoadingEnhancement(false);
     setIsEditModalOpen(true);
     setThumbnailDrafts([]);
     
@@ -949,6 +989,12 @@ function App() {
           title: editTitle,
           description: editDesc,
           tags: editTags.split(',').map(t => t.trim()).filter(Boolean),
+          playlist_id: editPlaylistId || null,
+          default_language: editDefaultLanguage || null,
+          category_id: editCategoryId || null,
+          age_restricted: editAgeRestricted,
+          ai_generated: editAiGenerated,
+          made_for_kids: editMadeForKids,
         }),
       });
       const data = await res.json();
@@ -961,6 +1007,30 @@ function App() {
       }
     } catch (e) {
       triggerToast('Network error saving metadata.', 'error');
+    }
+  };
+
+  const handleAskHermesOptimize = async () => {
+    if (!selectedVideo) return;
+    setLoadingEnhancement(true);
+    setAiEnhancedData(null);
+    try {
+      const res = await fetch(`${API_URL}/videos/${selectedVideo.id}/enhance`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAiEnhancedData(data);
+        triggerToast('Hermes optimization drafts generated!', 'success');
+      } else {
+        const data = await res.json();
+        triggerToast(data.detail || 'Hermes optimization failed.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error during Hermes optimization.', 'error');
+    } finally {
+      setLoadingEnhancement(false);
     }
   };
 
@@ -1181,6 +1251,12 @@ function App() {
     setChanTags('');
     setChanThumbStyle('');
     setChanThumbPrompt('');
+    setChanPlaylistId('');
+    setChanDefaultLanguage('');
+    setChanAgeRestricted(false);
+    setChanAiGenerated(false);
+    setChanCategoryId('');
+    setChanMadeForKids(false);
     fetchWatchFolders();
     setIsChannelModalOpen(true);
   };
@@ -1201,6 +1277,12 @@ function App() {
     setChanTags((channel.preset_tags || []).join(', '));
     setChanThumbStyle(channel.thumbnail_style_name || '');
     setChanThumbPrompt(channel.thumbnail_style_prompt || '');
+    setChanPlaylistId(channel.playlist_id || '');
+    setChanDefaultLanguage(channel.default_language || '');
+    setChanAgeRestricted(channel.age_restricted || false);
+    setChanAiGenerated(channel.ai_generated || false);
+    setChanCategoryId(channel.category_id || '');
+    setChanMadeForKids(channel.made_for_kids || false);
     fetchWatchFolders();
     setIsChannelModalOpen(true);
   };
@@ -1220,6 +1302,12 @@ function App() {
       preset_tags: chanTags.split(',').map(t => t.trim()).filter(Boolean),
       thumbnail_style_name: chanThumbStyle || null,
       thumbnail_style_prompt: chanThumbPrompt || null,
+      playlist_id: chanPlaylistId || null,
+      default_language: chanDefaultLanguage || null,
+      age_restricted: chanAgeRestricted,
+      ai_generated: chanAiGenerated,
+      category_id: chanCategoryId || null,
+      made_for_kids: chanMadeForKids,
     };
 
     try {
@@ -3000,8 +3088,29 @@ function App() {
               <h2>Review Draft details — ID {selectedVideo.id}</h2>
               <button type="button" className="modal-close" onClick={() => setIsEditModalOpen(false)}>×</button>
             </div>
-            
+
             <div className="modal-body">
+              {/* Hermes AI Review & Prediction Note */}
+              {selectedVideo.ai_review_note && (
+                <div style={{
+                  background: 'linear-gradient(135deg, rgba(79, 70, 229, 0.15), rgba(124, 58, 237, 0.15))',
+                  border: '1px solid rgba(124, 58, 237, 0.3)',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  marginBottom: '20px',
+                  boxShadow: '0 4px 20px rgba(124, 58, 237, 0.08)',
+                  backdropFilter: 'blur(8px)',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', color: '#c084fc', fontWeight: 'bold', fontSize: '0.95rem' }}>
+                    <span>✨</span>
+                    <span>Hermes AI Advisor Note & Prediction</span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
+                    {selectedVideo.ai_review_note}
+                  </p>
+                </div>
+              )}
+
               {/* Screenshot Frame Display */}
               <div className="form-group" style={{ marginBottom: '16px' }}>
                 <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3089,6 +3198,139 @@ function App() {
                 )}
               </div>
 
+              {/* Hermes Optimization controls */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleAskHermesOptimize}
+                  disabled={loadingEnhancement}
+                  style={{
+                    background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
+                    color: '#fff',
+                    border: 'none',
+                    fontWeight: 600,
+                    padding: '8px 16px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    boxShadow: '0 4px 12px rgba(124, 58, 237, 0.25)',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {loadingEnhancement ? '🔄 Consulting Hermes AI...' : '✨ Ask Hermes to Optimize'}
+                </button>
+              </div>
+
+              {aiEnhancedData && (
+                <div style={{
+                  background: 'rgba(255, 255, 255, 0.03)',
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: '12px',
+                  padding: '16px',
+                  marginBottom: '20px',
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <h3 style={{ margin: 0, fontSize: '1rem', color: 'var(--text-primary)' }}>✨ Hermes Recommendations</h3>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ padding: '2px 8px', fontSize: '0.75rem' }}
+                      onClick={() => setAiEnhancedData(null)}
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Choose an Optimized Title:</label>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
+                      {aiEnhancedData.titles.map((t, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          className="form-input"
+                          style={{
+                            textAlign: 'left',
+                            background: 'rgba(255,255,255,0.02)',
+                            cursor: 'pointer',
+                            padding: '10px 12px',
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            borderRadius: '6px',
+                            fontSize: '0.85rem',
+                          }}
+                          onClick={() => {
+                            setEditTitle(t);
+                            triggerToast('Applied title option!');
+                          }}
+                        >
+                          📌 {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '12px' }}>
+                    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      <span>Optimized Description:</span>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: '2px 6px', fontSize: '0.7rem' }}
+                        onClick={() => {
+                          setEditDesc(aiEnhancedData.description);
+                          triggerToast('Applied optimized description!');
+                        }}
+                      >
+                        Apply Description
+                      </button>
+                    </label>
+                    <pre style={{
+                      whiteSpace: 'pre-wrap',
+                      background: 'rgba(0,0,0,0.2)',
+                      padding: '10px',
+                      borderRadius: '6px',
+                      fontSize: '0.8rem',
+                      maxHeight: '150px',
+                      overflowY: 'auto',
+                      marginTop: '6px',
+                    }}>
+                      {aiEnhancedData.description}
+                    </pre>
+                  </div>
+
+                  <div className="form-group">
+                    <label style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                      <span>Optimized Tags:</span>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: '2px 6px', fontSize: '0.7rem' }}
+                        onClick={() => {
+                          setEditTags(aiEnhancedData.tags.join(', '));
+                          triggerToast('Applied optimized tags!');
+                        }}
+                      >
+                        Apply Tags
+                      </button>
+                    </label>
+                    <div style={{ marginTop: '6px', display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {aiEnhancedData.tags.map((tag, idx) => (
+                        <span key={idx} style={{
+                          background: 'rgba(255,255,255,0.05)',
+                          border: '1px solid rgba(255,255,255,0.1)',
+                          borderRadius: '4px',
+                          padding: '3px 8px',
+                          fontSize: '0.75rem',
+                        }}>
+                          #{tag}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Metadata Fields */}
               <div className="form-group">
                 <label htmlFor="edit-title">Title Draft</label>
@@ -3123,6 +3365,120 @@ function App() {
                   placeholder="lofi, study, chill"
                 />
               </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '16px 0' }} />
+              <h3>YouTube Settings Overrides</h3>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label htmlFor="edit-playlist-id">Playlist ID Override</label>
+                  <input
+                    id="edit-playlist-id"
+                    type="text"
+                    className="form-input"
+                    value={editPlaylistId}
+                    onChange={e => setEditPlaylistId(e.target.value)}
+                    placeholder="e.g. PL..."
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="edit-category-id">Category Override</label>
+                  <select
+                    id="edit-category-id"
+                    className="form-input"
+                    value={editCategoryId}
+                    onChange={e => setEditCategoryId(e.target.value)}
+                  >
+                    <option value="1">Film & Animation (1)</option>
+                    <option value="2">Autos & Vehicles (2)</option>
+                    <option value="10">Music (10)</option>
+                    <option value="15">Pets & Animals (15)</option>
+                    <option value="17">Sports (17)</option>
+                    <option value="19">Travel & Events (19)</option>
+                    <option value="20">Gaming (20)</option>
+                    <option value="22">People & Blogs (22)</option>
+                    <option value="23">Comedy (23)</option>
+                    <option value="24">Entertainment (24)</option>
+                    <option value="25">News & Politics (25)</option>
+                    <option value="26">Howto & Style (26)</option>
+                    <option value="27">Education (27)</option>
+                    <option value="28">Science & Technology (28)</option>
+                    <option value="29">Nonprofits & Activism (29)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="edit-default-lang">Subtitle Language Override</label>
+                <select
+                  id="edit-default-lang"
+                  className="form-input"
+                  value={editDefaultLanguage}
+                  onChange={e => setEditDefaultLanguage(e.target.value)}
+                >
+                  <option value="">-- No Language --</option>
+                  <option value="en">English (en)</option>
+                  <option value="id">Indonesian (id)</option>
+                  <option value="es">Spanish (es)</option>
+                  <option value="ja">Japanese (ja)</option>
+                  <option value="fr">French (fr)</option>
+                  <option value="pt">Portuguese (pt)</option>
+                  <option value="hi">Hindi (hi)</option>
+                  <option value="de">German (de)</option>
+                  <option value="ko">Korean (ko)</option>
+                  <option value="zh">Chinese (zh)</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'center', margin: '12px 0' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={editMadeForKids}
+                    onChange={e => setEditMadeForKids(e.target.checked)}
+                  />
+                  Made for Kids
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={editAgeRestricted}
+                    onChange={e => setEditAgeRestricted(e.target.checked)}
+                  />
+                  Age Restricted (18+)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={editAiGenerated}
+                    onChange={e => setEditAiGenerated(e.target.checked)}
+                  />
+                  Altered/AI-Generated Content
+                </label>
+              </div>
+
+              {(editAgeRestricted || editAiGenerated) && (
+                <div style={{
+                  background: 'rgba(245, 158, 11, 0.05)',
+                  border: '1px solid rgba(245, 158, 11, 0.2)',
+                  borderRadius: '8px',
+                  padding: '12px',
+                  marginBottom: '16px',
+                  fontSize: '0.8rem',
+                  color: 'var(--warning)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                }}>
+                  {editAgeRestricted && (
+                    <span>⚠️ <b>Age Restriction Note</b>: YouTube Data API v3 does not support setting "Age Restriction" programmatically. This will be stored for documentation but must be checked/verified manually on YouTube Studio.</span>
+                  )}
+                  {editAiGenerated && (
+                    <span>⚠️ <b>Altered/AI Content Note</b>: YouTube Data API v3 does not support setting "Altered/AI Content" flag programmatically. Please toggle this setting manually in YouTube Studio.</span>
+                  )}
+                </div>
+              )}
+
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
                 {['failed', 'error'].includes(selectedVideo.status) ? (
@@ -3339,6 +3695,98 @@ function App() {
                   onChange={e => setChanTags(e.target.value)}
                   placeholder="lofi, lofigirl, relaxing"
                 />
+              </div>
+
+              <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />
+              <h3>YouTube Defaults & Channel Presets</h3>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div className="form-group">
+                  <label htmlFor="chan-playlist-id">Default Playlist ID</label>
+                  <input
+                    id="chan-playlist-id"
+                    type="text"
+                    className="form-input"
+                    value={chanPlaylistId}
+                    onChange={e => setChanPlaylistId(e.target.value)}
+                    placeholder="e.g. PL..."
+                  />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="chan-category-id">Default Category</label>
+                  <select
+                    id="chan-category-id"
+                    className="form-input"
+                    value={chanCategoryId}
+                    onChange={e => setChanCategoryId(e.target.value)}
+                  >
+                    <option value="">-- Select Category --</option>
+                    <option value="1">Film & Animation (1)</option>
+                    <option value="2">Autos & Vehicles (2)</option>
+                    <option value="10">Music (10)</option>
+                    <option value="15">Pets & Animals (15)</option>
+                    <option value="17">Sports (17)</option>
+                    <option value="19">Travel & Events (19)</option>
+                    <option value="20">Gaming (20)</option>
+                    <option value="22">People & Blogs (22)</option>
+                    <option value="23">Comedy (23)</option>
+                    <option value="24">Entertainment (24)</option>
+                    <option value="25">News & Politics (25)</option>
+                    <option value="26">Howto & Style (26)</option>
+                    <option value="27">Education (27)</option>
+                    <option value="28">Science & Technology (28)</option>
+                    <option value="29">Nonprofits & Activism (29)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="chan-default-lang">Default Subtitle Language</label>
+                <select
+                  id="chan-default-lang"
+                  className="form-input"
+                  value={chanDefaultLanguage}
+                  onChange={e => setChanDefaultLanguage(e.target.value)}
+                >
+                  <option value="">-- Select Language --</option>
+                  <option value="en">English (en)</option>
+                  <option value="id">Indonesian (id)</option>
+                  <option value="es">Spanish (es)</option>
+                  <option value="ja">Japanese (ja)</option>
+                  <option value="fr">French (fr)</option>
+                  <option value="pt">Portuguese (pt)</option>
+                  <option value="hi">Hindi (hi)</option>
+                  <option value="de">German (de)</option>
+                  <option value="ko">Korean (ko)</option>
+                  <option value="zh">Chinese (zh)</option>
+                </select>
+              </div>
+
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '20px', alignItems: 'center', margin: '12px 0' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={chanMadeForKids}
+                    onChange={e => setChanMadeForKids(e.target.checked)}
+                  />
+                  Made for Kids
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={chanAgeRestricted}
+                    onChange={e => setChanAgeRestricted(e.target.checked)}
+                  />
+                  Age Restricted (18+)
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={chanAiGenerated}
+                    onChange={e => setChanAiGenerated(e.target.checked)}
+                  />
+                  Altered/AI-Generated Content
+                </label>
               </div>
 
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />

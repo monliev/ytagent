@@ -197,6 +197,11 @@ class UploadServiceSync:
             try:
                 youtube = self.get_youtube_client(db, channel.id, active_project_id)
                 youtube_id = self._upload_resumable(youtube, video, channel)
+                
+                # If playlist_id is configured, insert the video into the playlist
+                if video.playlist_id:
+                    self._add_video_to_playlist(youtube, youtube_id, video.playlist_id)
+                    
                 return youtube_id
             except HttpError as e:
                 if self._is_quota_error(e):
@@ -223,6 +228,26 @@ class UploadServiceSync:
                 logger.error("upload_unknown_error", video_id=video.id, error=str(e))
                 raise
 
+    def _add_video_to_playlist(self, youtube, video_id: str, playlist_id: str):
+        """Add uploaded video to a specific YouTube playlist."""
+        try:
+            logger.info("adding_video_to_playlist", video_id=video_id, playlist_id=playlist_id)
+            youtube.playlistItems().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "playlistId": playlist_id,
+                        "resourceId": {
+                            "kind": "youtube#video",
+                            "videoId": video_id
+                        }
+                    }
+                }
+            ).execute()
+            logger.info("added_video_to_playlist_success", video_id=video_id, playlist_id=playlist_id)
+        except Exception as e:
+            logger.error("failed_to_add_video_to_playlist", video_id=video_id, playlist_id=playlist_id, error=str(e))
+
     def _upload_resumable(self, youtube, video: Video, channel: Channel) -> str:
         """Call standard YouTube resumable insert API and upload chunks."""
         body = {
@@ -230,13 +255,18 @@ class UploadServiceSync:
                 "title": video.current_title or video.filename,
                 "description": video.current_description or "",
                 "tags": video.current_tags or [],
-                "categoryId": "10"  # Music category
+                "categoryId": video.category_id or "10"
             },
             "status": {
                 "privacyStatus": video.youtube_privacy.value,
-                "selfDeclaredMadeForKids": channel.made_for_kids
+                "selfDeclaredMadeForKids": video.made_for_kids
             }
         }
+
+        # Add defaultLanguage and defaultAudioLanguage if configured
+        if video.default_language:
+            body["snippet"]["defaultLanguage"] = video.default_language
+            body["snippet"]["defaultAudioLanguage"] = video.default_language
 
         # Resumable upload chunk size: 5MB
         media = MediaFileUpload(

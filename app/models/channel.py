@@ -17,6 +17,11 @@ class Channel(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     auto_approve: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     made_for_kids: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    playlist_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    default_language: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    age_restricted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ai_generated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    category_id: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
 
     # Presets
     preset_title_template: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)

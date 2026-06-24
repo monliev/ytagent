@@ -17,6 +17,11 @@ class ChannelBase(BaseModel):
     thumbnail_style_name: Optional[str] = None
     thumbnail_style_prompt: Optional[str] = None
     gcp_project_id: Optional[str] = None
+    playlist_id: Optional[str] = None
+    default_language: Optional[str] = None
+    age_restricted: bool = Field(default=False)
+    ai_generated: bool = Field(default=False)
+    category_id: Optional[str] = None
 
 class ChannelCreate(ChannelBase):
     pass
@@ -36,6 +41,11 @@ class ChannelUpdate(BaseModel):
     thumbnail_style_name: Optional[str] = None
     thumbnail_style_prompt: Optional[str] = None
     gcp_project_id: Optional[str] = None
+    playlist_id: Optional[str] = None
+    default_language: Optional[str] = None
+    age_restricted: Optional[bool] = None
+    ai_generated: Optional[bool] = None
+    category_id: Optional[str] = None
 
 class ChannelResponse(ChannelBase):
     id: int

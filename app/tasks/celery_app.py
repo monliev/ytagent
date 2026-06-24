@@ -61,6 +61,11 @@ celery_app.conf.update(
             "task": "app.tasks.analytics.sync_youtube_analytics",
             "schedule": crontab(hour="*/6", minute=30),
         },
+        # Daily at 08:00 WIB: Send morning briefing to supervisor via Telegram
+        "send-daily-hermes-report": {
+            "task": "app.tasks.maintenance.send_daily_hermes_report",
+            "schedule": crontab(hour=8, minute=0),
+        },
     },
 )
 

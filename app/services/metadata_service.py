@@ -134,3 +134,76 @@ class MetadataService:
             "tags": tags,
             "confidence_score": confidence_score
         }
+
+    def generate_ai_draft(self, filename: str, channel: Channel, duration_seconds: int = 0) -> dict[str, Any]:
+        """Generate title, description, tags, and Hermes review note using Cloudflare LLM.
+        Falls back to rules-based generate_draft on error or if unconfigured.
+        """
+        # Get base fallback first
+        fallback = self.generate_draft(filename, channel, duration_seconds)
+        fallback["ai_review_note"] = "Hermes: Draf metadata dibuat menggunakan template default. Silakan sesuaikan lebih lanjut."
+        
+        from app.core.config import settings
+        import httpx
+        import json
+        
+        if not settings.CF_AI_URL or "dummy" in settings.CF_AI_URL:
+            return fallback
+
+        # Parse duration for prompt
+        h = duration_seconds // 3600
+        m = (duration_seconds % 3600) // 60
+        duration_str = f"{h} Hours" if h > 0 else f"{m} Minutes"
+
+        prompt = f"""
+        You are Hermes, a professional YouTube growth strategist and automated co-pilot.
+        Generate YouTube video metadata based on this video:
+        Filename: {filename}
+        Channel Name: {channel.name}
+        Channel Niche/Genre: {channel.genre}
+        Video Duration: {duration_str}
+
+        Task:
+        1. Write an engaging, high-CTR, SEO-friendly video Title (maximum 100 characters).
+        2. Write a structured, readable video Description in Indonesian. Include:
+           - A hook (first 2 lines)
+           - A short summary of the video
+           - A call-to-action (subscribe and like)
+           - Relevant hashtags (3-5 tags) at the end.
+        3. Compile a list of 10-15 highly relevant Tags (keywords).
+        4. Write a concise "Hermes Review Note" (in Indonesian) evaluating the video's clickability, length, hook, or warning about optimizations (maximum 30 words).
+        
+        Format your response strictly as a JSON object:
+        {{
+          "title": "...",
+          "description": "...",
+          "tags": ["tag1", "tag2", ...],
+          "review_note": "..."
+        }}
+        """
+        try:
+            resp = httpx.post(
+                settings.CF_AI_URL,
+                json={"prompt": prompt, "system_instruction": "You are a professional YouTube SEO and growth strategist named Hermes."},
+                timeout=10.0
+            )
+            if resp.status_code == 200:
+                ai_data = resp.json()
+                if "response" in ai_data:
+                    text = ai_data["response"]
+                    start_idx = text.find("{")
+                    end_idx = text.rfind("}")
+                    if start_idx != -1 and end_idx != -1:
+                        parsed = json.loads(text[start_idx:end_idx+1])
+                        return {
+                            "title": parsed.get("title", fallback["title"])[:100],
+                            "description": parsed.get("description", fallback["description"]),
+                            "tags": parsed.get("tags", fallback["tags"])[:15],
+                            "confidence_score": Decimal("95.00"),
+                            "ai_review_note": f"Hermes: {parsed.get('review_note', 'Metadata dioptimasi oleh AI.')}"
+                        }
+        except Exception as e:
+            logger.warning("cf_ai_metadata_draft_generation_failed", error=str(e))
+            
+        return fallback
+

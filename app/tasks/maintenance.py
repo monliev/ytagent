@@ -356,3 +356,104 @@ def check_copyright_claims() -> dict:
                 
     return {"status": "complete", "paused_channels": paused_channels, "count": len(paused_channels)}
 
+
+@celery_app.task(name="app.tasks.maintenance.send_daily_hermes_report")
+def send_daily_hermes_report() -> dict:
+    """
+    Daily scheduled task that compiles and sends channel briefings to the supervisor via Telegram.
+    Includes views gained in the last 24h, top performing video, staging and queue counts.
+    """
+    from app.core.config import settings
+    from app.utils.telegram_api import object_telegram_api
+    from app.models import Channel, Video, VideoStatus, AnalyticsRecord
+    import asyncio
+    from sqlalchemy import func
+
+    reports_sent = []
+
+    with SessionLocal() as db:
+        channels = db.query(Channel).filter(Channel.is_active == True).all()
+        if not channels:
+            logger.info("send_daily_hermes_report_no_active_channels")
+            return {"status": "complete", "reports_sent": 0}
+
+        yesterday = datetime.utcnow() - timedelta(days=1)
+
+        for channel in channels:
+            try:
+                # 1. Views Gained in the last 24h
+                views_gained = db.query(func.sum(AnalyticsRecord.views_gained)).filter(
+                    AnalyticsRecord.channel_id == channel.id,
+                    AnalyticsRecord.recorded_at >= yesterday
+                ).scalar() or 0
+
+                # 2. Top Performing Video in last 24h
+                top_video_query = (
+                    db.query(
+                        AnalyticsRecord.video_id,
+                        func.sum(AnalyticsRecord.views_gained).label("total_gained")
+                    )
+                    .filter(
+                        AnalyticsRecord.channel_id == channel.id,
+                        AnalyticsRecord.recorded_at >= yesterday
+                    )
+                    .group_by(AnalyticsRecord.video_id)
+                    .order_by(func.sum(AnalyticsRecord.views_gained).desc())
+                    .first()
+                )
+
+                top_video_title = "N/A"
+                top_video_views = 0
+                if top_video_query and top_video_query.video_id:
+                    v = db.query(Video).filter(Video.id == top_video_query.video_id).first()
+                    if v:
+                        top_video_title = v.title or v.filename or "Untitled"
+                        top_video_views = top_video_query.total_gained
+
+                # 3. Current Queue Count (APPROVED + QUEUED)
+                queue_count = db.query(Video).filter(
+                    Video.channel_id == channel.id,
+                    Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED])
+                ).count()
+
+                # 4. Current Staging Count (STAGING + DETECTED)
+                staging_count = db.query(Video).filter(
+                    Video.channel_id == channel.id,
+                    Video.status.in_([VideoStatus.STAGING, VideoStatus.DETECTED])
+                ).count()
+
+                # Format Hermes Persona Briefing
+                message = (
+                    f"🤖 <b>Hermes AI Channel Briefing</b>\n"
+                    f"Channel: <b>{channel.name}</b>\n"
+                    f"Date: {datetime.utcnow().strftime('%Y-%m-%d')}\n\n"
+                    f"📈 <b>Performance (Last 24h):</b>\n"
+                    f"• Views Gained: <code>{views_gained:,}</code>\n"
+                    f"• Top Video: <i>{top_video_title}</i> (+{top_video_views:,} views)\n\n"
+                    f"📦 <b>Staging & Queue Status:</b>\n"
+                    f"• In Staging: <code>{staging_count}</code> video(s) awaiting review.\n"
+                    f"• In Queue: <code>{queue_count}</code> video(s) scheduled/queued.\n\n"
+                    f"<i>Hermes Suggestion: Keep staging clean to ensure consistent uploads!</i>"
+                )
+
+                # Send via Telegram
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.create_task(object_telegram_api.send_message(
+                        chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                        text=message
+                    ))
+                else:
+                    asyncio.run(object_telegram_api.send_message(
+                        chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                        text=message
+                    ))
+
+                reports_sent.append(channel.name)
+
+            except Exception as e:
+                logger.error("failed_to_send_daily_hermes_report", channel_id=channel.id, error=str(e))
+
+    return {"status": "complete", "reports_sent": len(reports_sent), "channels": reports_sent}
+
+

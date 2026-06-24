@@ -33,6 +33,13 @@ class VideoResponse(BaseModel):
     current_tags: Optional[List[str]] = None
     is_favorite: bool
     notes: Optional[str] = None
+    playlist_id: Optional[str] = None
+    default_language: Optional[str] = None
+    age_restricted: bool = False
+    ai_generated: bool = False
+    category_id: str = "10"
+    made_for_kids: bool = False
+    ai_review_note: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -44,6 +51,12 @@ class VideoMetadataUpdate(BaseModel):
     title: str = Field(..., max_length=100, description="The video title draft")
     description: str = Field(..., description="The video description draft")
     tags: List[str] = Field(..., description="The list of tags")
+    playlist_id: Optional[str] = None
+    default_language: Optional[str] = None
+    age_restricted: Optional[bool] = None
+    ai_generated: Optional[bool] = None
+    category_id: Optional[str] = None
+    made_for_kids: Optional[bool] = None
 
 class VideoThumbnailSelect(BaseModel):
     """Schema for selecting a thumbnail option."""
@@ -61,5 +74,12 @@ class ThumbnailDraftResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class AIEnhancementResponse(BaseModel):
+    """Response containing AI-enhanced titles, description, and tags."""
+    titles: List[str]
+    description: str
+    tags: List[str]
 
 
