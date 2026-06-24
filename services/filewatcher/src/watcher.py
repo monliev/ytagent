@@ -32,25 +32,32 @@ class VideoFileHandler(FileSystemEventHandler):
         if not abs_file.startswith(abs_mount):
             return
 
-        # Get path relative to the OMV mount
-        rel_path = os.path.relpath(abs_file, abs_mount)
-        parts = rel_path.split(os.sep)
+        # Get the directory path and filename
+        parent_dir = os.path.dirname(abs_file)
+        filename = os.path.basename(abs_file)
 
-        # Expected parts structure: [channel_name, filename]
-        # Length 2 means it is inside a channel folder, not a root file or deeper thumbnail subfolder
-        if len(parts) != 2:
+        # Ensure the file is not directly in the root of the mount path
+        if parent_dir == abs_mount:
             return
 
-        channel_name, filename = parts
+        # Ignore hidden/system files (like .DS_Store or .tmp files)
+        if filename.startswith("."):
+            return
 
-        # Ignore hidden/system folders or files (like .DS_Store or .tmp files)
-        if channel_name.startswith(".") or filename.startswith("."):
+        # Ignore if any directory in the path starts with "." (hidden folders)
+        rel_path = os.path.relpath(abs_file, abs_mount)
+        parts = rel_path.split(os.sep)
+        if any(part.startswith(".") for part in parts[:-1]):
             return
 
         # Check extension
         _, ext = os.path.splitext(filename)
         if ext.lower() not in self.allowed_extensions:
             return
+
+        # We pass the absolute path of the parent folder as channel_name so the API
+        # can perform an exact match against Channel.folder_path.
+        channel_name = parent_dir
 
         logger.info(f"New video detected: {filename} in folder '{channel_name}'")
 
