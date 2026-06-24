@@ -148,6 +148,7 @@ class MetadataService:
         import json
         
         if not settings.CF_AI_URL or "dummy" in settings.CF_AI_URL:
+            logger.info("Hermes AI is not configured or dummy URL is active for drafts. CF_AI_URL: %s", settings.CF_AI_URL)
             return fallback
 
         # Parse duration for prompt
@@ -191,29 +192,61 @@ class MetadataService:
                 ],
                 "temperature": 0.7
             }
+            logger.info("Sending draft request to Hermes AI URL: %s with model: %s", url, payload["model"])
             resp = httpx.post(
                 url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=15.0
             )
+            logger.info("Hermes AI draft responded with status_code: %d", resp.status_code)
             if resp.status_code == 200:
                 ai_data = resp.json()
+                logger.info("Hermes AI draft response json: %s", json.dumps(ai_data))
                 if "choices" in ai_data and len(ai_data["choices"]) > 0:
                     text = ai_data["choices"][0]["message"]["content"]
+                    logger.info("Hermes AI draft response content text: %s", text)
                     start_idx = text.find("{")
                     end_idx = text.rfind("}")
                     if start_idx != -1 and end_idx != -1:
                         parsed = json.loads(text[start_idx:end_idx+1])
+                        logger.info("Hermes AI draft parsed json successfully: %s", json.dumps(parsed))
+                        
+                        # Extract title robustly
+                        title_val = parsed.get("title") or parsed.get("titles")
+                        if isinstance(title_val, list) and len(title_val) > 0:
+                            title_val = title_val[0]
+                        if not isinstance(title_val, str):
+                            title_val = fallback["title"]
+                            
+                        # Extract description robustly
+                        desc_val = parsed.get("description", fallback["description"])
+                        
+                        # Extract tags robustly
+                        tags_val = parsed.get("tags")
+                        if isinstance(tags_val, list):
+                            extracted_tags = [str(t) for t in tags_val if t][:15]
+                        else:
+                            extracted_tags = fallback["tags"]
+                            
+                        # Extract review note robustly
+                        note_val = parsed.get("review_note") or parsed.get("ai_review_note") or "Metadata dioptimasi oleh AI."
+                        
                         return {
-                            "title": parsed.get("title", fallback["title"])[:100],
-                            "description": parsed.get("description", fallback["description"]),
-                            "tags": parsed.get("tags", fallback["tags"])[:15],
+                            "title": title_val[:100],
+                            "description": desc_val,
+                            "tags": extracted_tags,
                             "confidence_score": Decimal("95.00"),
-                            "ai_review_note": f"Hermes: {parsed.get('review_note', 'Metadata dioptimasi oleh AI.')}"
+                            "ai_review_note": f"Hermes: {note_val}"
                         }
+                    else:
+                        logger.warning("Hermes AI draft response text did not contain JSON delimiters '{' and '}'")
+                else:
+                    logger.warning("Hermes AI draft choices are empty or missing in response JSON")
+            else:
+                logger.warning("Hermes AI draft request failed. Status code: %d, Response: %s", resp.status_code, resp.text)
         except Exception as e:
-            logger.warning("cf_ai_metadata_draft_generation_failed", error=str(e))
+            logger.warning("cf_ai_metadata_draft_generation_failed", error=str(e), exc_info=True)
             
         return fallback
 

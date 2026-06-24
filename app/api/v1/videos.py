@@ -227,6 +227,7 @@ async def enhance_video_metadata(
     import json
 
     if not settings.CF_AI_URL or "dummy" in settings.CF_AI_URL:
+        logger.info("Hermes AI is not configured or dummy URL is active. CF_AI_URL: %s", settings.CF_AI_URL)
         return default_response
 
     prompt = f"""
@@ -260,6 +261,7 @@ async def enhance_video_metadata(
             ],
             "temperature": 0.7
         }
+        logger.info("Sending request to Hermes AI URL: %s with model: %s", url, payload["model"])
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 url,
@@ -267,21 +269,51 @@ async def enhance_video_metadata(
                 headers={"Content-Type": "application/json"},
                 timeout=18.0
             )
+        logger.info("Hermes AI responded with status_code: %d", resp.status_code)
         if resp.status_code == 200:
             ai_data = resp.json()
+            logger.info("Hermes AI response json: %s", json.dumps(ai_data))
             if "choices" in ai_data and len(ai_data["choices"]) > 0:
                 text = ai_data["choices"][0]["message"]["content"]
+                logger.info("Hermes AI response content text: %s", text)
                 start_idx = text.find("{")
                 end_idx = text.rfind("}")
                 if start_idx != -1 and end_idx != -1:
                     parsed = json.loads(text[start_idx:end_idx+1])
+                    logger.info("Hermes AI parsed json successfully: %s", json.dumps(parsed))
+                    
+                    # Extract titles robustly (fallback to single 'title' key or list format)
+                    titles_val = parsed.get("titles") or parsed.get("title")
+                    if isinstance(titles_val, str):
+                        extracted_titles = [titles_val]
+                    elif isinstance(titles_val, list):
+                        extracted_titles = [str(t)[:100] for t in titles_val if t]
+                    else:
+                        extracted_titles = default_response.titles
+                        
+                    # Extract description robustly
+                    extracted_desc = parsed.get("description", default_response.description)
+                    
+                    # Extract tags robustly
+                    tags_val = parsed.get("tags")
+                    if isinstance(tags_val, list):
+                        extracted_tags = [str(t) for t in tags_val if t][:15]
+                    else:
+                        extracted_tags = default_response.tags
+                        
                     return AIEnhancementResponse(
-                        titles=[t[:100] for t in parsed.get("titles", []) if t][:3] or default_response.titles,
-                        description=parsed.get("description", default_response.description),
-                        tags=parsed.get("tags", default_response.tags)[:15]
+                        titles=extracted_titles[:3] or default_response.titles,
+                        description=extracted_desc,
+                        tags=extracted_tags
                     )
+                else:
+                    logger.warning("Hermes AI response text did not contain JSON delimiters '{' and '}'")
+            else:
+                logger.warning("Hermes AI choices are empty or missing in response JSON")
+        else:
+            logger.warning("Hermes AI request failed. Status code: %d, Response: %s", resp.status_code, resp.text)
     except Exception as e:
-        logger.warning("cf_ai_enhance_metadata_failed", video_id=video.id, error=str(e))
+        logger.warning("cf_ai_enhance_metadata_failed", video_id=video.id, error=str(e), exc_info=True)
         
     return default_response
 
