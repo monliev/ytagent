@@ -88,7 +88,7 @@ async def update_settings(
         if new_val is None:
             continue
         # Skip if placeholder mask was posted back
-        if isinstance(new_val, str):
+        if isinstance(new_val, str) and new_val != "":
             if set(new_val) <= {"*"} or (key in SENSITIVE_KEYS and new_val.startswith("****") and "*" in new_val):
                 continue
 
