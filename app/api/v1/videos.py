@@ -284,9 +284,17 @@ async def enhance_video_metadata(
         if ai_token:
             headers["Authorization"] = f"Bearer {ai_token}"
             
+        def mask_auth_value(val: str | None) -> str | None:
+            if not val:
+                return val
+            if len(val) > 11 and val.startswith("Bearer "):
+                token = val[7:]
+                return "Bearer " + "*" * (len(token) - 4) + token[-4:]
+            return "****"
+            
         logger.info("Sending request to Hermes AI URL: %s with headers: %s and payload model: %s", 
                     url, 
-                    {k: (mask_value(k, v) if k == "Authorization" else v) for k, v in headers.items()}, 
+                    {k: (mask_auth_value(v) if k == "Authorization" else v) for k, v in headers.items()}, 
                     payload["model"])
             
         async with httpx.AsyncClient() as client:
