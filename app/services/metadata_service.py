@@ -151,6 +151,7 @@ class MetadataService:
         
         # Load AI URL from db settings, fallback to environment variable
         ai_url = settings.CF_AI_URL
+        ai_token = settings.CF_AI_TOKEN
         if db is not None:
             try:
                 stmt_setting = select(SystemSetting).where(SystemSetting.key == "cf_ai_url")
@@ -160,6 +161,15 @@ class MetadataService:
                     ai_url = setting_rec.value
             except Exception as db_err:
                 logger.warning("failed_to_load_ai_url_from_db_for_drafts", error=str(db_err))
+                
+            try:
+                stmt_token = select(SystemSetting).where(SystemSetting.key == "cf_ai_token")
+                res_token = await db.execute(stmt_token)
+                token_rec = res_token.scalar_one_or_none()
+                if token_rec and token_rec.value:
+                    ai_token = token_rec.value
+            except Exception as db_err:
+                logger.warning("failed_to_load_ai_token_from_db_for_drafts", error=str(db_err))
         
         if not ai_url or "dummy" in ai_url:
             logger.info("Hermes AI is not configured or dummy URL is active for drafts. AI URL: %s", ai_url)
@@ -207,12 +217,17 @@ class MetadataService:
                 "temperature": 0.7
             }
             logger.info("Sending draft request to Hermes AI URL: %s with model: %s", url, payload["model"])
+            
+            headers = {"Content-Type": "application/json"}
+            if ai_token:
+                headers["Authorization"] = f"Bearer {ai_token}"
+                
             # Note: since this is run in synchronous task flow (or ingestion), 
             # we keep it using synchronous httpx.post but we use the resolved ai_url.
             resp = httpx.post(
                 url,
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=15.0
             )
             logger.info("Hermes AI draft responded with status_code: %d", resp.status_code)

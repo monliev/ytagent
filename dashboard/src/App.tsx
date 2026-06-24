@@ -197,6 +197,7 @@ function App() {
   const [settingsTelegramToken, setSettingsTelegramToken] = useState('');
   const [settingsSupervisorId, setSettingsSupervisorId] = useState('');
   const [settingsCfAiUrl, setSettingsCfAiUrl] = useState('');
+  const [settingsCfAiToken, setSettingsCfAiToken] = useState('');
   const [settingsRecaptchaSiteKey, setSettingsRecaptchaSiteKey] = useState('');
   const [settingsRecaptchaSecretKey, setSettingsRecaptchaSecretKey] = useState('');
   // SFTP / NAS settings
@@ -483,6 +484,7 @@ function App() {
         setSettingsTelegramToken(data.telegram_bot_token || '');
         setSettingsSupervisorId(data.supervisor_telegram_id ? String(data.supervisor_telegram_id) : '');
         setSettingsCfAiUrl(data.cf_ai_url || '');
+        setSettingsCfAiToken(data.cf_ai_token || '');
         setSettingsRecaptchaSiteKey(data.recaptcha_site_key || '');
         setSettingsRecaptchaSecretKey(data.recaptcha_secret_key || '');
         setSettingsSftpHost(data.sftp_host || '');
@@ -519,6 +521,7 @@ function App() {
           telegram_bot_token: settingsTelegramToken,
           supervisor_telegram_id: settingsSupervisorId ? parseInt(settingsSupervisorId) : null,
           cf_ai_url: settingsCfAiUrl,
+          cf_ai_token: settingsCfAiToken,
           recaptcha_site_key: settingsRecaptchaSiteKey,
           recaptcha_secret_key: settingsRecaptchaSecretKey,
           sftp_host: settingsSftpHost,
@@ -580,7 +583,8 @@ function App() {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
-          cf_ai_url: settingsCfAiUrl
+          cf_ai_url: settingsCfAiUrl,
+          cf_ai_token: settingsCfAiToken
         })
       });
       const data = await res.json();
@@ -2424,6 +2428,17 @@ function App() {
                         value={settingsCfAiUrl}
                         onChange={e => setSettingsCfAiUrl(e.target.value)}
                         placeholder="https://api.cloudflare.com/client/v4/accounts/.../ai/run/..."
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label htmlFor="settings-cf-token">Cloudflare AI Token / API Key</label>
+                      <input
+                        id="settings-cf-token"
+                        type="password"
+                        className="form-input"
+                        value={settingsCfAiToken}
+                        onChange={e => setSettingsCfAiToken(e.target.value)}
+                        placeholder="••••••••••••••••"
                       />
                     </div>
                     <button

@@ -5,6 +5,7 @@ class SystemSettingsBase(BaseModel):
     telegram_bot_token: Optional[str] = Field(None, description="Telegram Bot Token")
     supervisor_telegram_id: Optional[int] = Field(None, description="Supervisor Telegram User ID")
     cf_ai_url: Optional[str] = Field(None, description="Cloudflare AI Worker URL")
+    cf_ai_token: Optional[str] = Field(None, description="Cloudflare AI Token or API Key")
     recaptcha_site_key: Optional[str] = Field(None, description="Google reCAPTCHA v2 Site Key")
     recaptcha_secret_key: Optional[str] = Field(None, description="Google reCAPTCHA v2 Secret Key")
     # SFTP / NAS settings

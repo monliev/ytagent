@@ -141,6 +141,8 @@ async def resolve_setting_value(key: str, user_input: str | None, db: AsyncSessi
             return settings.TELEGRAM_BOT_TOKEN
         elif key == "recaptcha_secret_key":
             return settings.RECAPTCHA_SECRET_KEY
+        elif key == "cf_ai_token":
+            return settings.CF_AI_TOKEN
     return user_input
 
 
@@ -191,6 +193,7 @@ async def test_telegram_connection(
 
 class CloudflareTestPayload(BaseModel):
     cf_ai_url: str
+    cf_ai_token: Optional[str] = None
 
 
 @router.post("/test-cloudflare")
@@ -203,6 +206,8 @@ async def test_cloudflare_connection(
     if not url or "dummy" in url:
         raise HTTPException(status_code=400, detail="Cloudflare AI URL is not configured.")
         
+    token = await resolve_setting_value("cf_ai_token", payload.cf_ai_token, db)
+    
     try:
         test_url = f"{url.rstrip('/')}/chat/completions"
         test_payload = {
@@ -210,17 +215,29 @@ async def test_cloudflare_connection(
             "messages": [{"role": "user", "content": "ping"}],
             "max_tokens": 5
         }
+        
+        headers = {"Content-Type": "application/json"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+            
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 test_url,
                 json=test_payload,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=5.0
             )
-        return {
-            "status": "connected",
-            "detail": f"Endpoint responded with HTTP {resp.status_code}."
-        }
+            
+        if resp.status_code == 200:
+            return {
+                "status": "connected",
+                "detail": f"Endpoint responded with HTTP {resp.status_code}."
+            }
+        else:
+            return {
+                "status": "failed",
+                "detail": f"Endpoint responded with HTTP {resp.status_code}: {resp.text[:100]}"
+            }
     except Exception as e:
         return {
             "status": "failed",

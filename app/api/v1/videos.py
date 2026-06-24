@@ -233,6 +233,12 @@ async def enhance_video_metadata(
     setting_rec = res_setting.scalar_one_or_none()
     ai_url = (setting_rec.value if setting_rec else None) or settings.CF_AI_URL
 
+    # Fetch AI Token from db settings, fallback to environment variable config
+    stmt_token = select(SystemSetting).where(SystemSetting.key == "cf_ai_token")
+    res_token = await db.execute(stmt_token)
+    token_rec = res_token.scalar_one_or_none()
+    ai_token = (token_rec.value if token_rec else None) or settings.CF_AI_TOKEN
+
     if not ai_url or "dummy" in ai_url:
         logger.info("Hermes AI is not configured or dummy URL is active. AI URL: %s", ai_url)
         return default_response
@@ -269,11 +275,16 @@ async def enhance_video_metadata(
             "temperature": 0.7
         }
         logger.info("Sending request to Hermes AI URL: %s with model: %s", url, payload["model"])
+        
+        headers = {"Content-Type": "application/json"}
+        if ai_token:
+            headers["Authorization"] = f"Bearer {ai_token}"
+            
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 url,
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=18.0
             )
         logger.info("Hermes AI responded with status_code: %d", resp.status_code)
