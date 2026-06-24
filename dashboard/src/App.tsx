@@ -140,6 +140,10 @@ function App() {
   const [selectedAnalyticsChannelId, setSelectedAnalyticsChannelId] = useState<number | null>(null);
   const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [videoAnalytics, setVideoAnalytics] = useState<any[]>([]);
+  const [performanceInsights, setPerformanceInsights] = useState<any[]>([]);
+  const [selectedVideoAnalytics, setSelectedVideoAnalytics] = useState<any | null>(null);
+  const [syncingAnalytics, setSyncingAnalytics] = useState(false);
   const [systemHealth, setSystemHealth] = useState<any>(null);
   const [selectedStagingVideoIds, setSelectedStagingVideoIds] = useState<number[]>([]);
   const [bulkProcessing, setBulkProcessing] = useState(false);
@@ -1020,11 +1024,58 @@ function App() {
   const fetchAnalytics = async (channelId: number) => {
     if (!channelId || isNaN(channelId)) {
       setAnalyticsData(null);
+      setVideoAnalytics([]);
+      setPerformanceInsights([]);
+      setSelectedVideoAnalytics(null);
       return;
     }
     setLoadingAnalytics(true);
     try {
-      const res = await fetch(`${API_URL}/channels/${channelId}/analytics`, {
+      // 1. Fetch channel-level global analytics
+      const resGlobal = await fetch(`${API_URL}/channels/${channelId}/analytics`, {
+        headers: getHeaders(),
+      });
+      if (resGlobal.status === 401) {
+        handleLogout();
+        return;
+      }
+      if (resGlobal.ok) {
+        const data = await resGlobal.json();
+        setAnalyticsData(data);
+      } else {
+        triggerToast('Failed to fetch channel analytics.', 'error');
+      }
+
+      // 2. Fetch video-level analytics
+      const resVideos = await fetch(`${API_URL}/channels/${channelId}/videos/analytics`, {
+        headers: getHeaders(),
+      });
+      if (resVideos.ok) {
+        const data = await resVideos.json();
+        setVideoAnalytics(data.videos || []);
+      }
+
+      // 3. Fetch performance insights (suggestions)
+      const resInsights = await fetch(`${API_URL}/channels/${channelId}/insights`, {
+        headers: getHeaders(),
+      });
+      if (resInsights.ok) {
+        const data = await resInsights.json();
+        setPerformanceInsights(data.insights || []);
+      }
+    } catch (e) {
+      triggerToast('Error fetching analytics data.', 'error');
+    } finally {
+      setLoadingAnalytics(false);
+    }
+  };
+
+  const triggerManualAnalyticsSync = async (channelId: number) => {
+    if (!channelId || isNaN(channelId)) return;
+    setSyncingAnalytics(true);
+    try {
+      const res = await fetch(`${API_URL}/channels/${channelId}/analytics/sync`, {
+        method: 'POST',
         headers: getHeaders(),
       });
       if (res.status === 401) {
@@ -1032,15 +1083,19 @@ function App() {
         return;
       }
       if (res.ok) {
-        const data = await res.json();
-        setAnalyticsData(data);
+        triggerToast('Synchronization task dispatched! Fetching fresh data in 5 seconds...', 'success');
+        setTimeout(() => {
+          fetchAnalytics(channelId);
+          setSyncingAnalytics(false);
+        }, 5000);
       } else {
-        triggerToast('Failed to fetch channel analytics.', 'error');
+        const err = await res.json();
+        triggerToast(err.detail || 'Failed to trigger sync.', 'error');
+        setSyncingAnalytics(false);
       }
     } catch (e) {
-      triggerToast('Error fetching analytics.', 'error');
-    } finally {
-      setLoadingAnalytics(false);
+      triggerToast('Network error triggering sync.', 'error');
+      setSyncingAnalytics(false);
     }
   };
 
@@ -1824,7 +1879,6 @@ function App() {
           </div>
         )}
 
-        {/* Tab 5: Analytics */}
         {currentTab === 'analytics' && (
           <div>
             <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
@@ -1833,6 +1887,16 @@ function App() {
                 <p>YouTube Channel views tracking, engagement metrics, and daily trends</p>
               </div>
               <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+                {selectedAnalyticsChannelId && (
+                  <button 
+                    className="btn btn-secondary" 
+                    onClick={() => triggerManualAnalyticsSync(selectedAnalyticsChannelId)}
+                    disabled={syncingAnalytics || loadingAnalytics}
+                    style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}
+                  >
+                    {syncingAnalytics ? '🔄 Syncing...' : '🔄 Sync Now'}
+                  </button>
+                )}
                 <label style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Select Channel:</label>
                 <select 
                   className="form-input" 
@@ -1897,6 +1961,137 @@ function App() {
                     <span>{analyticsData.daily_stats[0]?.date}</span>
                     <span>Views Timeline</span>
                     <span>{analyticsData.daily_stats[analyticsData.daily_stats.length - 1]?.date}</span>
+                  </div>
+                </div>
+
+                {/* Side-by-side Video list and AI advice layout */}
+                <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '24px', marginTop: '32px' }}>
+                  {/* Left Column: Video List */}
+                  <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <h3 style={{ fontSize: '1.15rem', fontWeight: 700 }}>Uploaded Videos Performance</h3>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Click any video to load AI advice</span>
+                    </div>
+
+                    <div style={{ maxHeight: '500px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {videoAnalytics.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
+                          No uploaded videos synced for this channel yet. Make sure your videos are uploaded and synced.
+                        </div>
+                      ) : (
+                        videoAnalytics.map((v) => (
+                          <div 
+                            key={v.video_id} 
+                            onClick={() => setSelectedVideoAnalytics(v)}
+                            className={`card ${selectedVideoAnalytics?.video_id === v.video_id ? 'active' : ''}`}
+                            style={{ 
+                              padding: '16px', 
+                              cursor: 'pointer', 
+                              border: selectedVideoAnalytics?.video_id === v.video_id ? '1px solid var(--primary)' : '1px solid transparent',
+                              backgroundColor: selectedVideoAnalytics?.video_id === v.video_id ? 'rgba(var(--primary-rgb), 0.08)' : 'rgba(255,255,255,0.02)',
+                              transition: 'all 0.2s ease',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '8px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.9rem', color: 'var(--text)', lineBreak: 'anywhere' }}>{v.title}</span>
+                              <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.05)', whiteSpace: 'nowrap' }}>
+                                {v.views.toLocaleString()} views
+                              </span>
+                            </div>
+                            
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                              <span>👍 {v.likes} likes</span>
+                              <span>💬 {v.comments} comments</span>
+                              <span>🎯 CTR: <b>{v.ctr ? `${v.ctr}%` : 'N/A'}</b></span>
+                              <span>⏱️ Ret: <b>{v.avd_percentage ? `${v.avd_percentage}%` : 'N/A'}</b></span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Column: AI Advisor Panel */}
+                  <div className="card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '1.4rem' }}>🧙‍♂️</span>
+                      <div>
+                        <h3 style={{ fontSize: '1.15rem', fontWeight: 700, margin: 0 }}>Hermes AI Advisor</h3>
+                        <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', margin: 0 }}>
+                          {selectedVideoAnalytics ? `Insights for: ${selectedVideoAnalytics.title.slice(0, 30)}...` : 'Channel overall advice'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flexGrow: 1, maxHeight: '460px', overflowY: 'auto' }}>
+                      {performanceInsights.filter(ins => !selectedVideoAnalytics || ins.video_id === selectedVideoAnalytics.video_id).length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          <span>🌱</span>
+                          <span>No performance alerts or suggestions for this selection. All metrics look stable!</span>
+                        </div>
+                      ) : (
+                        performanceInsights
+                          .filter(ins => !selectedVideoAnalytics || ins.video_id === selectedVideoAnalytics.video_id)
+                          .map((ins) => {
+                            let badgeStyle = { backgroundColor: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.2)' };
+                            if (ins.severity === 'warning') {
+                              badgeStyle = { backgroundColor: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.2)' };
+                            } else if (ins.severity === 'critical') {
+                              badgeStyle = { backgroundColor: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' };
+                            }
+                            
+                            return (
+                              <div 
+                                key={ins.id}
+                                style={{ 
+                                  padding: '16px', 
+                                  borderRadius: '8px', 
+                                  backgroundColor: 'rgba(255,255,255,0.01)',
+                                  borderLeft: ins.severity === 'critical' ? '4px solid #ef4444' : ins.severity === 'warning' ? '4px solid #f59e0b' : '4px solid #3b82f6',
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  gap: '8px'
+                                }}
+                              >
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                                  <span style={{ fontWeight: 700, fontSize: '0.9rem', color: 'var(--text)' }}>{ins.title}</span>
+                                  <span style={{ fontSize: '0.7rem', padding: '1px 6px', borderRadius: '4px', textTransform: 'uppercase', fontWeight: 700, ...badgeStyle }}>
+                                    {ins.severity}
+                                  </span>
+                                </div>
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>{ins.message}</p>
+                                
+                                {ins.suggested_action && (
+                                  <div style={{ 
+                                    marginTop: '8px', 
+                                    padding: '12px', 
+                                    borderRadius: '6px', 
+                                    backgroundColor: 'rgba(255,255,255,0.02)', 
+                                    border: '1px dashed rgba(255,255,255,0.05)'
+                                  }}>
+                                    <span style={{ fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', color: 'var(--primary)', display: 'block', marginBottom: '4px' }}>
+                                      💡 Suggested Action:
+                                    </span>
+                                    <span style={{ fontSize: '0.8rem', color: 'var(--text)' }}>{ins.suggested_action}</span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                      )}
+                    </div>
+                    {selectedVideoAnalytics && (
+                      <button 
+                        className="btn btn-secondary" 
+                        onClick={() => setSelectedVideoAnalytics(null)}
+                        style={{ padding: '8px', fontSize: '0.8rem', alignSelf: 'stretch' }}
+                      >
+                        Reset Filter to Channel
+                      </button>
+                    )}
                   </div>
                 </div>
               </>

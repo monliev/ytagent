@@ -15,9 +15,10 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 
 from app.api.deps import get_db, get_current_user
-from app.models import Channel, User, GCPProject, GCPProjectStatus, ChannelCredentials
+from app.models import Channel, User, GCPProject, GCPProjectStatus, ChannelCredentials, Video, AnalyticsRecord, PerformanceInsight
 from app.schemas.channel import ChannelCreate, ChannelUpdate, ChannelResponse
 from app.schemas.gcp_project import GCPProjectCreate, GCPProjectResponse, ChannelCredentialsCreate, ChannelCredentialsResponse, OAuthStatusResponse
+from app.schemas.analytics import VideoAnalyticsResponse, VideoAnalyticsItem, PerformanceInsightResponse, PerformanceInsightItem
 from app.utils.credential_crypto import encrypt_token, decrypt_token
 
 logger = structlog.get_logger()
@@ -849,6 +850,144 @@ async def disconnect_channel_oauth(
     await db.commit()
     logger.info("api_channel_disconnected", channel_id=id)
     return {"detail": "Channel disconnected successfully"}
+
+
+@router.get("/{id}/videos/analytics", response_model=VideoAnalyticsResponse)
+async def get_channel_videos_analytics(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> VideoAnalyticsResponse:
+    """Get the list of videos for this channel along with their latest AnalyticsRecord stats."""
+    logger.info("api_get_channel_videos_analytics_called", channel_id=id)
+    
+    # 1. Fetch channel
+    stmt = select(Channel).where(Channel.id == id)
+    res = await db.execute(stmt)
+    channel = res.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+        
+    # 2. Query all uploaded videos for this channel
+    stmt_v = select(Video).where(
+        Video.channel_id == id,
+        Video.youtube_video_id != None
+    ).order_by(Video.created_at.desc())
+    v_res = await db.execute(stmt_v)
+    videos = v_res.scalars().all()
+    
+    # For each video, get the latest AnalyticsRecord
+    items = []
+    for v in videos:
+        stmt_ar = select(AnalyticsRecord).where(
+            AnalyticsRecord.video_id == v.id
+        ).order_by(AnalyticsRecord.recorded_at.desc()).limit(1)
+        ar_res = await db.execute(stmt_ar)
+        record = ar_res.scalar_one_or_none()
+        
+        if record:
+            items.append(VideoAnalyticsItem(
+                video_id=v.id,
+                youtube_video_id=v.youtube_video_id,
+                title=v.current_title or v.filename,
+                views=record.views,
+                likes=record.likes,
+                comments=record.comments,
+                shares=record.shares,
+                ctr=record.ctr,
+                avd_seconds=record.avd_seconds,
+                avd_percentage=record.avd_percentage,
+                recorded_at=record.recorded_at
+            ))
+        else:
+            items.append(VideoAnalyticsItem(
+                video_id=v.id,
+                youtube_video_id=v.youtube_video_id,
+                title=v.current_title or v.filename,
+                views=0,
+                likes=0,
+                comments=0,
+                shares=0,
+                ctr=None,
+                avd_seconds=None,
+                avd_percentage=None,
+                recorded_at=None
+            ))
+            
+    return VideoAnalyticsResponse(videos=items)
+
+
+@router.get("/{id}/insights", response_model=PerformanceInsightResponse)
+async def get_channel_performance_insights(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> PerformanceInsightResponse:
+    """Get the list of active performance insights/suggestions for this channel."""
+    logger.info("api_get_channel_performance_insights_called", channel_id=id)
+    
+    # Fetch channel
+    stmt = select(Channel).where(Channel.id == id)
+    res = await db.execute(stmt)
+    channel = res.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+        
+    stmt_ins = select(PerformanceInsight).where(
+        PerformanceInsight.channel_id == id
+    ).order_by(PerformanceInsight.created_at.desc())
+    ins_res = await db.execute(stmt_ins)
+    insights_list = ins_res.scalars().all()
+    
+    items = []
+    for ins in insights_list:
+        video_title = None
+        if ins.video_id:
+            stmt_v = select(Video).where(Video.id == ins.video_id)
+            v_res = await db.execute(stmt_v)
+            video_obj = v_res.scalar_one_or_none()
+            if video_obj:
+                video_title = video_obj.current_title or video_obj.filename
+                
+        items.append(PerformanceInsightItem(
+            id=ins.id,
+            video_id=ins.video_id,
+            video_title=video_title,
+            insight_type=ins.insight_type.value if hasattr(ins.insight_type, 'value') else str(ins.insight_type),
+            title=ins.title,
+            message=ins.message,
+            severity=ins.severity.value if hasattr(ins.severity, 'value') else str(ins.severity),
+            metric_type=ins.metric_type,
+            metric_value=ins.metric_value,
+            metric_average=ins.metric_average,
+            suggested_action=ins.suggested_action,
+            is_read=ins.is_read,
+            created_at=ins.created_at
+        ))
+        
+    return PerformanceInsightResponse(insights=items)
+
+
+@router.post("/{id}/analytics/sync")
+async def sync_channel_analytics_now(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Trigger manual sync of YouTube Analytics and video performance statistics immediately."""
+    logger.info("api_trigger_manual_analytics_sync_called", channel_id=id, user_id=current_user.id)
+    
+    stmt = select(Channel).where(Channel.id == id)
+    res = await db.execute(stmt)
+    channel = res.scalar_one_or_none()
+    if not channel:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
+        
+    # Trigger Celery task in background
+    from app.tasks.analytics import sync_youtube_analytics
+    sync_youtube_analytics.delay()
+    
+    return {"detail": "YouTube Analytics synchronization task triggered successfully."}
 
 
 

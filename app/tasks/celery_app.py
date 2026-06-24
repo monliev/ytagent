@@ -56,6 +56,11 @@ celery_app.conf.update(
             "task": "app.tasks.maintenance.check_copyright_claims",
             "schedule": crontab(hour="*/6", minute=0),
         },
+        # Every 6 hours: pull video-level analytics and update DB
+        "sync-youtube-analytics": {
+            "task": "app.tasks.analytics.sync_youtube_analytics",
+            "schedule": crontab(hour="*/6", minute=30),
+        },
     },
 )
 
