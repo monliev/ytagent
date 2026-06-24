@@ -204,8 +204,19 @@ async def test_cloudflare_connection(
         raise HTTPException(status_code=400, detail="Cloudflare AI URL is not configured.")
         
     try:
+        test_url = f"{url.rstrip('/')}/chat/completions"
+        test_payload = {
+            "model": "hermes",
+            "messages": [{"role": "user", "content": "ping"}],
+            "max_tokens": 5
+        }
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, timeout=5.0)
+            resp = await client.post(
+                test_url,
+                json=test_payload,
+                headers={"Content-Type": "application/json"},
+                timeout=5.0
+            )
         return {
             "status": "connected",
             "detail": f"Endpoint responded with HTTP {resp.status_code}."

@@ -251,16 +251,26 @@ async def enhance_video_metadata(
     }}
     """
     try:
+        url = f"{settings.CF_AI_URL.rstrip('/')}/chat/completions"
+        payload = {
+            "model": "hermes",
+            "messages": [
+                {"role": "system", "content": "You are a professional YouTube SEO strategist named Hermes."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.7
+        }
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                settings.CF_AI_URL,
-                json={"prompt": prompt, "system_instruction": "You are a professional YouTube SEO strategist named Hermes."},
-                timeout=12.0
+                url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=18.0
             )
         if resp.status_code == 200:
             ai_data = resp.json()
-            if "response" in ai_data:
-                text = ai_data["response"]
+            if "choices" in ai_data and len(ai_data["choices"]) > 0:
+                text = ai_data["choices"][0]["message"]["content"]
                 start_idx = text.find("{")
                 end_idx = text.rfind("}")
                 if start_idx != -1 and end_idx != -1:
