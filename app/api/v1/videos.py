@@ -225,9 +225,16 @@ async def enhance_video_metadata(
     from app.core.config import settings
     import httpx
     import json
+    from app.models.system_setting import SystemSetting
 
-    if not settings.CF_AI_URL or "dummy" in settings.CF_AI_URL:
-        logger.info("Hermes AI is not configured or dummy URL is active. CF_AI_URL: %s", settings.CF_AI_URL)
+    # Fetch AI URL from db settings, fallback to environment variable config
+    stmt_setting = select(SystemSetting).where(SystemSetting.key == "cf_ai_url")
+    res_setting = await db.execute(stmt_setting)
+    setting_rec = res_setting.scalar_one_or_none()
+    ai_url = (setting_rec.value if setting_rec else None) or settings.CF_AI_URL
+
+    if not ai_url or "dummy" in ai_url:
+        logger.info("Hermes AI is not configured or dummy URL is active. AI URL: %s", ai_url)
         return default_response
 
     prompt = f"""
@@ -252,7 +259,7 @@ async def enhance_video_metadata(
     }}
     """
     try:
-        url = f"{settings.CF_AI_URL.rstrip('/')}/chat/completions"
+        url = f"{ai_url.rstrip('/')}/chat/completions"
         payload = {
             "model": "hermes",
             "messages": [

@@ -174,10 +174,11 @@ class IngestionService:
 
             # C. Generate metadata draft
             logger.info("generating_metadata_draft", video_id=video.id)
-            draft_data = self.metadata_service.generate_ai_draft(
+            draft_data = await self.metadata_service.generate_ai_draft(
                 filename=filename,
                 channel=channel,
-                duration_seconds=video.duration_seconds or 0
+                duration_seconds=video.duration_seconds or 0,
+                db=db
             )
 
             metadata_draft = MetadataDraft(

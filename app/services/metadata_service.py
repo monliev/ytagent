@@ -135,7 +135,7 @@ class MetadataService:
             "confidence_score": confidence_score
         }
 
-    def generate_ai_draft(self, filename: str, channel: Channel, duration_seconds: int = 0) -> dict[str, Any]:
+    async def generate_ai_draft(self, filename: str, channel: Channel, duration_seconds: int = 0, db: Optional[Any] = None) -> dict[str, Any]:
         """Generate title, description, tags, and Hermes review note using Cloudflare LLM.
         Falls back to rules-based generate_draft on error or if unconfigured.
         """
@@ -146,9 +146,23 @@ class MetadataService:
         from app.core.config import settings
         import httpx
         import json
+        from sqlalchemy import select
+        from app.models.system_setting import SystemSetting
         
-        if not settings.CF_AI_URL or "dummy" in settings.CF_AI_URL:
-            logger.info("Hermes AI is not configured or dummy URL is active for drafts. CF_AI_URL: %s", settings.CF_AI_URL)
+        # Load AI URL from db settings, fallback to environment variable
+        ai_url = settings.CF_AI_URL
+        if db is not None:
+            try:
+                stmt_setting = select(SystemSetting).where(SystemSetting.key == "cf_ai_url")
+                res_setting = await db.execute(stmt_setting)
+                setting_rec = res_setting.scalar_one_or_none()
+                if setting_rec and setting_rec.value:
+                    ai_url = setting_rec.value
+            except Exception as db_err:
+                logger.warning("failed_to_load_ai_url_from_db_for_drafts", error=str(db_err))
+        
+        if not ai_url or "dummy" in ai_url:
+            logger.info("Hermes AI is not configured or dummy URL is active for drafts. AI URL: %s", ai_url)
             return fallback
 
         # Parse duration for prompt
@@ -183,7 +197,7 @@ class MetadataService:
         }}
         """
         try:
-            url = f"{settings.CF_AI_URL.rstrip('/')}/chat/completions"
+            url = f"{ai_url.rstrip('/')}/chat/completions"
             payload = {
                 "model": "hermes",
                 "messages": [
@@ -193,6 +207,8 @@ class MetadataService:
                 "temperature": 0.7
             }
             logger.info("Sending draft request to Hermes AI URL: %s with model: %s", url, payload["model"])
+            # Note: since this is run in synchronous task flow (or ingestion), 
+            # we keep it using synchronous httpx.post but we use the resolved ai_url.
             resp = httpx.post(
                 url,
                 json=payload,
