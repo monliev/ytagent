@@ -262,6 +262,7 @@ function App() {
         setLogs(logData.items);
         setLogTotal(logData.total);
       }
+      triggerToast('Dashboard data refreshed successfully.', 'success');
     } catch (e) {
       console.error(e);
       triggerToast('Network error refreshing dashboard data.', 'error');
