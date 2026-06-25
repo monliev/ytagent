@@ -4437,16 +4437,20 @@ function App() {
                     />
                   </div>
 
-                  <div className="form-group" style={{ marginBottom: '10px' }}>
-                    <label style={{ fontSize: '0.75rem', marginBottom: '2px' }}>Title Template</label>
+                  <div className="form-group" style={{ marginBottom: '10px', opacity: chanTitlePool.trim() ? 0.6 : 1 }}>
+                    <label style={{ fontSize: '0.75rem', marginBottom: '2px', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>Title Template</span>
+                      {chanTitlePool.trim() && <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', fontWeight: 'normal' }}>⚠️ Diabaikan karena Title Pool aktif</span>}
+                    </label>
                     <input
                       type="text"
                       className="form-input"
-                      style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                      style={{ padding: '6px 10px', fontSize: '0.85rem', cursor: chanTitlePool.trim() ? 'not-allowed' : 'text' }}
                       value={tpl.title_template || ''}
                       onChange={e => handleUpdateTemplate(idx, 'title_template', e.target.value)}
-                      placeholder="e.g. {mood} lofi mix for {activity}"
-                      required
+                      placeholder={chanTitlePool.trim() ? "Diabaikan karena Title Pool aktif" : "e.g. {mood} lofi mix for {activity}"}
+                      required={!chanTitlePool.trim()}
+                      disabled={!!chanTitlePool.trim()}
                     />
                   </div>
 
