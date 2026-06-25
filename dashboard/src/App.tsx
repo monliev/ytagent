@@ -83,6 +83,7 @@ interface Channel {
   preset_tags: string[] | null;
   preset_social_links: any | null;
   preset_templates?: any[] | null;
+  title_pool: string | null;
   thumbnail_style_name: string | null;
   thumbnail_style_prompt: string | null;
   gcp_project_id: string | null;
@@ -104,6 +105,80 @@ interface SystemLog {
   created_at: string;
 }
 
+const formatRecentActivityLog = (log: any) => {
+  let title = "Aktivitas";
+  let emoji = "ℹ️";
+  let color = "var(--text-primary)";
+  let bg = "rgba(255, 255, 255, 0.05)";
+
+  switch (log.event_type) {
+    case 'video_detected':
+      title = "Video Baru Terdeteksi";
+      emoji = "📥";
+      color = "#3b82f6";
+      bg = "rgba(59, 130, 246, 0.15)";
+      break;
+    case 'upload_started':
+      title = "Memulai Upload";
+      emoji = "⚡";
+      color = "#f59e0b";
+      bg = "rgba(245, 158, 11, 0.15)";
+      break;
+    case 'upload_success':
+    case 'upload_completed':
+      title = "Berhasil Terupload";
+      emoji = "✅";
+      color = "#10b981";
+      bg = "rgba(16, 185, 129, 0.15)";
+      break;
+    case 'upload_failed':
+      title = "Gagal Mengunggah";
+      emoji = "❌";
+      color = "#ef4444";
+      bg = "rgba(239, 68, 68, 0.15)";
+      break;
+    case 'video_rescheduled':
+      title = "Jadwal Diubah";
+      emoji = "🕒";
+      color = "#8b5cf6";
+      bg = "rgba(139, 92, 246, 0.15)";
+      break;
+    case 'video_publish_now':
+      title = "Publish Instan";
+      emoji = "🚀";
+      color = "#ec4899";
+      bg = "rgba(236, 72, 153, 0.15)";
+      break;
+    case 'video_returned_to_staging':
+      title = "Dikembalikan ke Draft";
+      emoji = "📥";
+      color = "#6b7280";
+      bg = "rgba(107, 114, 128, 0.15)";
+      break;
+    case 'video_approved':
+    case 'video_approved_bulk':
+    case 'video_approved_via_telegram':
+      title = "Video Disetujui";
+      emoji = "👍";
+      color = "#10b981";
+      bg = "rgba(16, 185, 129, 0.15)";
+      break;
+    case 'video_discarded':
+    case 'video_discarded_bulk':
+    case 'video_discarded_via_telegram':
+      title = "Video Dibuang";
+      emoji = "🗑️";
+      color = "#ef4444";
+      bg = "rgba(239, 68, 68, 0.15)";
+      break;
+    default:
+      title = (log.event_type || 'Aktivitas').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+      emoji = "📝";
+  }
+
+  return { title, emoji, color, bg };
+};
+
 function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -119,6 +194,7 @@ function App() {
   const [videos, setVideos] = useState<Video[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [logs, setLogs] = useState<SystemLog[]>([]);
+  const [recentLogs, setRecentLogs] = useState<SystemLog[]>([]);
 
   // Staging Detail Modal state
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
@@ -143,6 +219,7 @@ function App() {
   const [chanActive, setChanActive] = useState(true);
   const [chanAutoApprove, setChanAutoApprove] = useState(false);
   const [chanTitleTemp, setChanTitleTemp] = useState('');
+  const [chanTitlePool, setChanTitlePool] = useState('');
   const [chanDescTemp, setChanDescTemp] = useState('');
   const [chanTags, setChanTags] = useState('');
   const [chanThumbStyle, setChanThumbStyle] = useState('');
@@ -305,6 +382,18 @@ function App() {
         setLogs(logData.items);
         setLogTotal(logData.total);
       }
+
+      // Fetch recent user-centric/business activity logs
+      let recentLogsUrl = `${API_URL}/logs/?page=1&size=50&business_only=true`;
+      if (selectedChannelId !== 'all') {
+        recentLogsUrl += `&channel_id=${selectedChannelId}`;
+      }
+      const recentLogRes = await fetch(recentLogsUrl, { headers: getHeaders() });
+      if (recentLogRes.ok) {
+        const recentLogData = await recentLogRes.json();
+        setRecentLogs(recentLogData.items);
+      }
+
       triggerToast('Dashboard data refreshed successfully.', 'success');
     } catch (e) {
       console.error(e);
@@ -1396,6 +1485,7 @@ function App() {
     setChanActive(true);
     setChanAutoApprove(false);
     setChanTitleTemp('');
+    setChanTitlePool('');
     setChanDescTemp('');
     setChanTags('');
     setChanThumbStyle('');
@@ -1428,6 +1518,7 @@ function App() {
     setChanActive(channel.is_active);
     setChanAutoApprove(channel.auto_approve);
     setChanTitleTemp(channel.preset_title_template || '');
+    setChanTitlePool(channel.title_pool || '');
     setChanDescTemp(channel.preset_description_template || '');
     setChanTags((channel.preset_tags || []).join(', '));
     setChanThumbStyle(channel.thumbnail_style_name || '');
@@ -1512,6 +1603,7 @@ function App() {
       is_active: chanActive,
       auto_approve: chanAutoApprove,
       preset_title_template: chanTitleTemp || null,
+      title_pool: chanTitlePool || null,
       preset_description_template: chanDescTemp || null,
       preset_tags: chanTags.split(',').map(t => t.trim()).filter(Boolean),
       thumbnail_style_name: chanThumbStyle || null,
@@ -1875,16 +1967,54 @@ function App() {
                 <div>
                   <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>Recent Activity</h2>
                   <div className="card" style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '350px', overflowY: 'auto' }}>
-                    {logs.slice(0, 5).map(log => (
-                      <div key={log.id} style={{ display: 'flex', flexDirection: 'column', gap: '4px', fontSize: '0.8rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '8px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span className={`log-level level-${log.level}`} style={{ padding: '1px 4px', fontSize: '0.65rem' }}>{log.level}</span>
-                          <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>{new Date(log.created_at).toLocaleTimeString()}</span>
+                    {recentLogs.slice(0, 10).map(log => {
+                      const details = formatRecentActivityLog(log);
+                      return (
+                        <div 
+                          key={log.id} 
+                          style={{ 
+                            display: 'flex', 
+                            gap: '12px', 
+                            alignItems: 'flex-start',
+                            padding: '12px', 
+                            background: 'rgba(255, 255, 255, 0.01)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px'
+                          }}
+                        >
+                          <div 
+                            style={{ 
+                              width: '32px', 
+                              height: '32px', 
+                              borderRadius: '50%', 
+                              backgroundColor: details.bg,
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '1.1rem',
+                              flexShrink: 0,
+                              boxShadow: `0 0 6px ${details.bg}`
+                            }}
+                          >
+                            {details.emoji}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '2px' }}>
+                              <span style={{ fontWeight: 600, fontSize: '0.85rem', color: details.color }}>
+                                {details.title}
+                              </span>
+                              <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
+                                {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-primary)', lineHeight: '1.3', wordBreak: 'break-word' }}>
+                              {log.message}
+                            </p>
+                          </div>
                         </div>
-                        <p style={{ color: 'var(--text-primary)' }}>{log.message}</p>
-                      </div>
-                    ))}
-                    {logs.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>No logs recorded yet</p>}
+                      );
+                    })}
+                    {recentLogs.length === 0 && <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '20px' }}>No activity recorded yet</p>}
                   </div>
                 </div>
 
@@ -4255,6 +4385,21 @@ function App() {
                     Auto Approve
                   </label>
                 </div>
+              </div>
+
+              <div className="form-group" style={{ marginTop: '16px' }}>
+                <label htmlFor="chan-title-pool">Kumpulan Judul Siap Pakai (Satu judul per baris)</label>
+                <textarea
+                  id="chan-title-pool"
+                  className="form-textarea"
+                  style={{ minHeight: '120px', fontFamily: 'monospace', fontSize: '0.85rem' }}
+                  value={chanTitlePool}
+                  onChange={e => setChanTitlePool(e.target.value)}
+                  placeholder="Judul Siap Pakai 1&#10;Judul Siap Pakai 2&#10;Judul Siap Pakai 3..."
+                />
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px', lineHeight: '1.4' }}>
+                  Masukkan satu judul per baris. Jika diisi, draf video baru akan menggunakan judul dari daftar ini secara berurutan dan mengabaikan template judul di bawah. Di akhir judul akan otomatis ditambahkan durasi video (contoh: <code> | [45min]</code>). Disarankan panjang setiap judul tidak lebih dari 80 karakter agar tidak melebihi batas 100 karakter YouTube.
+                </p>
               </div>
 
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />

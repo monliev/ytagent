@@ -19,6 +19,7 @@ async def list_logs(
     event_type: Optional[str] = Query(None, description="Filter by event type"),
     video_id: Optional[int] = Query(None, description="Filter by related video ID"),
     channel_id: Optional[int] = Query(None, description="Filter by related channel ID"),
+    business_only: Optional[bool] = Query(None, description="Filter only business/user-centric events"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> SystemLogsPaginated:
@@ -36,6 +37,24 @@ async def list_logs(
         query = query.where(SystemLog.video_id == video_id)
     if channel_id:
         query = query.where(SystemLog.channel_id == channel_id)
+    if business_only:
+        business_events = [
+            "video_detected",
+            "upload_started",
+            "upload_success",
+            "upload_completed",
+            "upload_failed",
+            "video_rescheduled",
+            "video_publish_now",
+            "video_returned_to_staging",
+            "video_approved",
+            "video_discarded",
+            "video_approved_bulk",
+            "video_discarded_bulk",
+            "video_approved_via_telegram",
+            "video_discarded_via_telegram"
+        ]
+        query = query.where(SystemLog.event_type.in_(business_events))
         
     # Get total count
     count_query = select(func.count()).select_from(query.subquery())

@@ -78,19 +78,34 @@ class MetadataService:
         if preset_templates and isinstance(preset_templates, list) and len(preset_templates) > 0:
             chosen_tpl = random.choice(preset_templates)
 
-        # 2. Build Title using template
-        template = channel.preset_title_template or "{mood} {genre} Beats for {activity} | {duration}"
+        # 2. Build Title (use sequential Title Pool if configured, fallback to template)
+        title_pool = getattr(channel, "title_pool", None)
         metadata_template_id = None
-        if chosen_tpl:
-            template = chosen_tpl.get("title_template") or template
-            metadata_template_id = chosen_tpl.get("id")
-        
-        title = template.format(
-            mood=hints["mood"],
-            activity=hints["activity"],
-            genre=hints["genre"],
-            duration=hints["duration"]
-        )
+        if title_pool and title_pool.strip():
+            titles = [t.strip() for t in title_pool.split("\n") if t.strip()]
+            if titles:
+                from app.core.database import SessionLocal
+                from app.models.video import Video
+                from sqlalchemy import func
+                
+                with SessionLocal() as sync_db:
+                    count = sync_db.query(func.count(Video.id)).filter(Video.channel_id == channel.id).scalar() or 0
+                
+                selected_title = titles[count % len(titles)]
+                duration_min = round(duration_seconds / 60)
+                title = f"{selected_title} | [{duration_min}min]"
+        else:
+            template = channel.preset_title_template or "{mood} {genre} Beats for {activity} | {duration}"
+            if chosen_tpl:
+                template = chosen_tpl.get("title_template") or template
+                metadata_template_id = chosen_tpl.get("id")
+            
+            title = template.format(
+                mood=hints["mood"],
+                activity=hints["activity"],
+                genre=hints["genre"],
+                duration=hints["duration"]
+            )
         
         # Enforce YouTube's 100 character limit
         if len(title) > 100:
