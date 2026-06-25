@@ -4328,7 +4328,7 @@ function App() {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                 <div className="form-group">
-                  <label>Preferred Daily Upload Time</label>
+                  <label>Preferred Daily Upload Time (WIB / GMT+7)</label>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <select
                       className="form-input"
@@ -4573,9 +4573,12 @@ function App() {
               </div>
 
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />
-              <h3>AI Thumbnail presets</h3>
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span>AI Thumbnail presets</span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 'normal', color: 'var(--text-secondary)', background: 'rgba(255,255,255,0.05)', padding: '2px 8px', borderRadius: '4px', border: '1px solid var(--border-color)' }}>⚠️ Belum Aktif</span>
+              </h3>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '16px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '16px', opacity: 0.5, pointerEvents: 'none' }}>
                 <div className="form-group">
                   <label htmlFor="chan-thumb-style">Thumbnail Style Name</label>
                   <input
@@ -4585,6 +4588,7 @@ function App() {
                     value={chanThumbStyle}
                     onChange={e => setChanThumbStyle(e.target.value)}
                     placeholder="e.g. fireplace_relax"
+                    disabled={true}
                   />
                 </div>
                 <div className="form-group">
@@ -4596,9 +4600,13 @@ function App() {
                     value={chanThumbPrompt}
                     onChange={e => setChanThumbPrompt(e.target.value)}
                     placeholder="Detailed visual artwork prompt context..."
+                    disabled={true}
                   />
                 </div>
               </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: '4px', marginBottom: '8px' }}>
+                Fitur generator gambar AI dinonaktifkan sementara karena modul Cloudflare AI belum dihubungkan pada tab Global Settings.
+              </p>
 
               <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
                 <button type="submit" className="btn btn-primary" style={{ flexGrow: 1 }}>
