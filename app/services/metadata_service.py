@@ -70,8 +70,20 @@ class MetadataService:
             else:
                 hints["duration"] = f"{m} Minutes"
 
+        # Check for randomized templates presets in channel
+        chosen_tpl = None
+        import random
+        # getattr is safe if model is not fully migrated or loaded
+        preset_templates = getattr(channel, "preset_templates", None)
+        if preset_templates and isinstance(preset_templates, list) and len(preset_templates) > 0:
+            chosen_tpl = random.choice(preset_templates)
+
         # 2. Build Title using template
         template = channel.preset_title_template or "{mood} {genre} Beats for {activity} | {duration}"
+        metadata_template_id = None
+        if chosen_tpl:
+            template = chosen_tpl.get("title_template") or template
+            metadata_template_id = chosen_tpl.get("id")
         
         title = template.format(
             mood=hints["mood"],
@@ -90,6 +102,8 @@ class MetadataService:
             "Enjoy this selected {genre} mix, perfect for {activity}.\n\n"
             "Subscribe for more daily uploads!\n"
         )
+        if chosen_tpl:
+            desc_template = chosen_tpl.get("description_template") or desc_template
         
         # Format base description
         description = desc_template.format(
@@ -109,7 +123,15 @@ class MetadataService:
 
         # 4. Compile Tags
         # Combine default tags from channel and keyword-based tags
-        tags = list(channel.preset_tags) if channel.preset_tags else []
+        base_tags = []
+        if chosen_tpl and "tags" in chosen_tpl:
+            base_tags = chosen_tpl["tags"]
+            if isinstance(base_tags, str):
+                base_tags = [t.strip() for t in base_tags.split(",") if t.strip()]
+        else:
+            base_tags = list(channel.preset_tags) if channel.preset_tags else []
+            
+        tags = list(base_tags)
         extra_tags = [hints["mood"].lower(), hints["activity"].lower(), hints["genre"].lower(), "relaxing", "study music"]
         for tag in extra_tags:
             if tag not in tags:
@@ -121,9 +143,9 @@ class MetadataService:
         # 5. Calculate Draft Confidence Score
         # High confidence if presets are complete, slightly lower if using general fallbacks
         base_confidence = 85.0
-        if not channel.preset_title_template:
+        if not channel.preset_title_template and not chosen_tpl:
             base_confidence -= 10.0
-        if not channel.preset_description_template:
+        if not channel.preset_description_template and not chosen_tpl:
             base_confidence -= 5.0
             
         confidence_score = Decimal(f"{max(50.0, base_confidence):.2f}")
@@ -132,7 +154,8 @@ class MetadataService:
             "title": title,
             "description": description,
             "tags": tags,
-            "confidence_score": confidence_score
+            "confidence_score": confidence_score,
+            "metadata_template_id": metadata_template_id
         }
 
     async def generate_ai_draft(self, filename: str, channel: Channel, duration_seconds: int = 0, db: Optional[Any] = None) -> dict[str, Any]:

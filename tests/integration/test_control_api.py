@@ -1,5 +1,6 @@
 import pytest
 import asyncio
+from datetime import time
 from sqlalchemy import select
 from httpx import AsyncClient, ASGITransport
 
@@ -190,7 +191,7 @@ async def test_video_control_endpoints(db_session):
         name="Test_Ch_Video",
         genre="study",
         folder_path="/mnt/nas/Test_Ch_Video",
-        preferred_time="15:00:00",
+        preferred_time=time(15, 0, 0),
         is_active=True
     )
     db_session.add_all([user, channel])
@@ -321,7 +322,7 @@ async def test_telegram_webhook_callback(db_session):
         name="Test_Ch_TG",
         genre="relax",
         folder_path="/mnt/nas/Test_Ch_TG",
-        preferred_time="09:00:00",
+        preferred_time=time(9, 0, 0),
         is_active=True
     )
     db_session.add_all([user, channel])
@@ -403,7 +404,7 @@ async def test_video_retry_endpoint(db_session):
         name="Test_Ch_Retry",
         genre="relax",
         folder_path="/mnt/nas/Test_Ch_Retry",
-        preferred_time="09:00:00",
+        preferred_time=time(9, 0, 0),
         is_active=True
     )
     db_session.add_all([user, channel])
@@ -510,7 +511,7 @@ async def test_bulk_video_actions(db_session):
         name="Test_Ch_Bulk",
         genre="ambient",
         folder_path="/mnt/nas/Test_Ch_Bulk",
-        preferred_time="10:00:00",
+        preferred_time=time(10, 0, 0),
         is_active=True
     )
     db_session.add_all([user, channel])
@@ -587,7 +588,7 @@ async def test_channel_analytics_endpoint(db_session):
         name="Test_Ch_Analytics",
         genre="relax",
         folder_path="/mnt/nas/Test_Ch_Analytics",
-        preferred_time="09:00:00",
+        preferred_time=time(9, 0, 0),
         is_active=True
     )
     db_session.add_all([user, channel])
@@ -636,7 +637,7 @@ async def test_channel_oauth_status_and_disconnect(db_session):
         name="Test_Ch_OAuth",
         genre="relax",
         folder_path="/mnt/nas/Test_Ch_OAuth",
-        preferred_time="09:00:00",
+        preferred_time=time(9, 0, 0),
         is_active=True,
         gcp_project_id="test-proj-123"
     )
@@ -719,7 +720,7 @@ async def test_hybrid_settings_and_ai_enhancement(db_session):
         name="Test_Ch_Hybrid",
         genre="gaming",
         folder_path="/mnt/nas/Test_Ch_Hybrid",
-        preferred_time="10:00:00",
+        preferred_time=time(10, 0, 0),
         is_active=True,
         playlist_id="PL_HYBRID_DEFAULT",
         default_language="en",

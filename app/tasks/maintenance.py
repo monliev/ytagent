@@ -31,7 +31,7 @@ def dispatch_scheduled_uploads() -> dict:
     from app.tasks.upload import upload_video_task
 
     dispatched = []
-    now = datetime.utcnow()
+    now = datetime.now()
 
     with SessionLocal() as db:
         videos = (

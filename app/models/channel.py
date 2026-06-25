@@ -28,6 +28,7 @@ class Channel(Base):
     preset_description_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     preset_tags: Mapped[Optional[list[str]]] = mapped_column(JSON, nullable=True)
     preset_social_links: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    preset_templates: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON, nullable=True)
 
     # Thumbnail preset
     thumbnail_style_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

@@ -82,6 +82,7 @@ interface Channel {
   preset_description_template: string | null;
   preset_tags: string[] | null;
   preset_social_links: any | null;
+  preset_templates?: any[] | null;
   thumbnail_style_name: string | null;
   thumbnail_style_prompt: string | null;
   gcp_project_id: string | null;
@@ -146,6 +147,7 @@ function App() {
   const [chanTags, setChanTags] = useState('');
   const [chanThumbStyle, setChanThumbStyle] = useState('');
   const [chanThumbPrompt, setChanThumbPrompt] = useState('');
+  const [chanTemplates, setChanTemplates] = useState<any[]>([]);
 
   // New Channel Settings form states
   const [chanPlaylistId, setChanPlaylistId] = useState('');
@@ -192,6 +194,12 @@ function App() {
   
   // reCAPTCHA state
   const [recaptchaSiteKey, setRecaptchaSiteKey] = useState<string | null>(null);
+
+  // Schedule View States
+  const [scheduleViewMode, setScheduleViewMode] = useState<'list' | 'calendar'>('calendar');
+  const [reschedulingVideoId, setReschedulingVideoId] = useState<number | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState<string>('');
+  const [rescheduleTime, setRescheduleTime] = useState<string>('');
 
   // Settings Tab state
   const [settingsTelegramToken, setSettingsTelegramToken] = useState('');
@@ -1078,6 +1086,74 @@ function App() {
     }
   };
 
+  const handleRescheduleVideoSubmit = async (videoId: number) => {
+    if (!rescheduleDate || !rescheduleTime) {
+      triggerToast('Please select both date and time.', 'error');
+      return;
+    }
+    try {
+      const datetimeStr = `${rescheduleDate}T${rescheduleTime}:00`;
+      const res = await fetch(`${API_URL}/videos/${videoId}/reschedule`, {
+        method: 'POST',
+        headers: {
+          ...getHeaders(),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ scheduled_time: datetimeStr }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast('Video schedule updated!', 'success');
+        setReschedulingVideoId(null);
+        setRescheduleDate('');
+        setRescheduleTime('');
+        refreshAllData();
+      } else {
+        triggerToast(data.detail || 'Failed to reschedule video.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error rescheduling video.', 'error');
+    }
+  };
+
+  const handlePublishNowSubmit = async (videoId: number) => {
+    if (!window.confirm('Are you sure you want to publish this video immediately to YouTube? This will bypass the queue schedule.')) return;
+    try {
+      const res = await fetch(`${API_URL}/videos/${videoId}/publish-now`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast('Video publish triggered immediately!', 'success');
+        refreshAllData();
+      } else {
+        triggerToast(data.detail || 'Failed to publish video.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error triggering publish.', 'error');
+    }
+  };
+
+  const handleMoveToStagingSubmit = async (videoId: number) => {
+    if (!window.confirm('Move this video back to staging area? This will remove its upload schedule.')) return;
+    try {
+      const res = await fetch(`${API_URL}/videos/${videoId}/move-to-staging`, {
+        method: 'POST',
+        headers: getHeaders(),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        triggerToast('Video returned to staging successfully.', 'success');
+        refreshAllData();
+      } else {
+        triggerToast(data.detail || 'Failed to return to staging.', 'error');
+      }
+    } catch (e) {
+      triggerToast('Network error returning to staging.', 'error');
+    }
+  };
+
 
   const triggerQueueIntegrityPatrol = async () => {
     setPatrollingQueue(true);
@@ -1330,6 +1406,12 @@ function App() {
     setChanAiGenerated(false);
     setChanCategoryId('');
     setChanMadeForKids(false);
+    setChanTemplates([{
+      id: 'default',
+      title_template: '',
+      description_template: '',
+      tags: ''
+    }]);
     fetchWatchFolders();
     setIsChannelModalOpen(true);
   };
@@ -1356,13 +1438,72 @@ function App() {
     setChanAiGenerated(channel.ai_generated || false);
     setChanCategoryId(channel.category_id || '');
     setChanMadeForKids(channel.made_for_kids || false);
+    
+    if (channel.preset_templates && channel.preset_templates.length > 0) {
+      setChanTemplates(channel.preset_templates.map(t => ({
+        id: t.id,
+        title_template: t.title_template || '',
+        description_template: t.description_template || '',
+        tags: Array.isArray(t.tags) ? t.tags.join(', ') : (t.tags || '')
+      })));
+    } else {
+      setChanTemplates([{
+        id: 'default',
+        title_template: channel.preset_title_template || '',
+        description_template: channel.preset_description_template || '',
+        tags: (channel.preset_tags || []).join(', ')
+      }]);
+    }
+    
     fetchWatchFolders();
     setIsChannelModalOpen(true);
+  };
+
+  const handleAddTemplate = () => {
+    setChanTemplates(prev => [
+      ...prev,
+      {
+        id: `tpl_${Math.random().toString(36).substring(2, 7)}`,
+        title_template: '',
+        description_template: '',
+        tags: ''
+      }
+    ]);
+  };
+
+  const handleUpdateTemplate = (index: number, key: string, value: any) => {
+    setChanTemplates(prev => prev.map((t, idx) => {
+      if (idx === index) {
+        return { ...t, [key]: value };
+      }
+      return t;
+    }));
+  };
+
+  const handleRemoveTemplate = (index: number) => {
+    setChanTemplates(prev => prev.filter((_, idx) => idx !== index));
   };
 
   const handleSaveChannel = async (e: React.FormEvent) => {
     e.preventDefault();
     const padTime = (val: string) => val.padStart(2, '0');
+    const processedTemplates = chanTemplates.map(t => {
+      let tagsList = [];
+      if (t.tags) {
+        if (Array.isArray(t.tags)) {
+          tagsList = t.tags;
+        } else {
+          tagsList = t.tags.split(',').map((tag: any) => tag.trim()).filter(Boolean);
+        }
+      }
+      return {
+        id: t.id,
+        title_template: t.title_template,
+        description_template: t.description_template,
+        tags: tagsList
+      };
+    });
+
     const payload = {
       name: chanName,
       genre: chanGenre,
@@ -1381,6 +1522,7 @@ function App() {
       ai_generated: chanAiGenerated,
       category_id: chanCategoryId || null,
       made_for_kids: chanMadeForKids,
+      preset_templates: processedTemplates.length > 0 ? processedTemplates : null,
     };
 
     try {
@@ -1700,11 +1842,12 @@ function App() {
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
               {/* Left Column: Channels Grid Summary */}
               <div>
-                <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>Channel Preset Presets</h2>
+                <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>Active Channels Overview</h2>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                   {channels.map(chan => {
                     const chanVideos = videos.filter(v => v.channel_id === chan.id);
                     const chanStaging = chanVideos.filter(v => v.status === 'staging').length;
+                    const chanQueue = chanVideos.filter(v => ['approved', 'queued'].includes(v.status)).length;
                     const chanCompleted = chanVideos.filter(v => v.status === 'uploaded').length;
                     return (
                       <div key={chan.id} className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -1718,6 +1861,7 @@ function App() {
                         </div>
                         <div style={{ display: 'flex', gap: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '12px', fontSize: '0.8rem' }}>
                           <span>🎬 <b>{chanStaging}</b> Staging</span>
+                          <span>📋 <b>{chanQueue}</b> Queue</span>
                           <span>✓ <b>{chanCompleted}</b> Uploaded</span>
                         </div>
                       </div>
@@ -2094,44 +2238,321 @@ function App() {
         )}
 
         {/* Tab 4: Schedule */}
-        {currentTab === 'schedule' && (
-          <div>
-            <div className="page-header">
-              <div className="page-title-group">
-                <h1>Video Queue Schedule</h1>
-                <p>Chronological queue of upcoming automatically scheduled video uploads</p>
-              </div>
-            </div>
+        {currentTab === 'schedule' && (() => {
+          const channelFilteredVideos = videos
+            .filter(v => (selectedChannelId === 'all' || v.channel_id === selectedChannelId) && v.scheduled_time && ['approved', 'queued'].includes(v.status))
+            .sort((a, b) => new Date(a.scheduled_time!).getTime() - new Date(b.scheduled_time!).getTime());
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              {videos.filter(v => v.scheduled_time && ['approved', 'queued'].includes(v.status)).sort((a,b) => new Date(a.scheduled_time!).getTime() - new Date(b.scheduled_time!).getTime()).map((v, i) => (
-                <div key={v.id} className="card" style={{ padding: '20px', display: 'flex', gap: '20px', alignItems: 'center' }}>
-                  <div style={{
-                    padding: '12px 20px', backgroundColor: 'var(--primary-light)', color: 'var(--primary)',
-                    borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '90px'
-                  }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 600, textTransform: 'uppercase' }}>Day {i+1}</span>
-                    <span style={{ fontSize: '1.2rem', fontWeight: 800 }}>{new Date(v.scheduled_time!).toLocaleDateString('en-US', { day: '2-digit', month: 'short' })}</span>
-                  </div>
-                  <div style={{ flexGrow: 1 }}>
-                    <h3 style={{ fontSize: '1.1rem', fontWeight: 600 }}>{v.current_title || v.filename}</h3>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                      ⏰ Scheduled Time: <b>{new Date(v.scheduled_time!).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</b>
-                    </p>
-                  </div>
-                  <span className="status-badge badge-approved" style={{ alignSelf: 'center' }}>{v.status}</span>
+          const rolling21Days = Array.from({ length: 21 }).map((_, i) => {
+            const d = new Date();
+            d.setDate(d.getDate() + i);
+            return d;
+          });
+
+          return (
+            <div>
+              <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <div className="page-title-group">
+                  <h1>Video Queue Schedule</h1>
+                  <p>Visualize, track, and reschedule upcoming video uploads sequentially</p>
                 </div>
-              ))}
+                <div style={{ display: 'flex', gap: '8px', background: 'rgba(0,0,0,0.2)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '0.8rem',
+                      borderRadius: '6px',
+                      background: scheduleViewMode === 'calendar' ? 'var(--primary)' : 'transparent',
+                      color: scheduleViewMode === 'calendar' ? '#fff' : 'var(--text-secondary)',
+                      border: 'none',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => setScheduleViewMode('calendar')}
+                  >
+                    📅 Grid View
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    style={{
+                      padding: '6px 12px',
+                      fontSize: '0.8rem',
+                      borderRadius: '6px',
+                      background: scheduleViewMode === 'list' ? 'var(--primary)' : 'transparent',
+                      color: scheduleViewMode === 'list' ? '#fff' : 'var(--text-secondary)',
+                      border: 'none',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                    onClick={() => setScheduleViewMode('list')}
+                  >
+                    📋 List View
+                  </button>
+                </div>
+              </div>
 
-              {videos.filter(v => v.scheduled_time && ['approved', 'queued'].includes(v.status)).length === 0 && (
-                <div className="spinner-container" style={{ padding: '80px 20px' }}>
-                  <h2>No scheduled uploads</h2>
-                  <p style={{ color: 'var(--text-secondary)' }}>Approve staging drafts to schedule them for daily release.</p>
+              {scheduleViewMode === 'list' ? (
+                // Timeline List View
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {channelFilteredVideos.map((v, i) => {
+                    const isEditing = reschedulingVideoId === v.id;
+                    return (
+                      <div key={v.id} className="card" style={{ padding: '16px', display: 'flex', gap: '20px', alignItems: 'center', borderLeft: '4px solid var(--primary)' }}>
+                        <div style={{
+                          padding: '10px 16px', backgroundColor: 'var(--primary-light)', color: 'var(--primary)',
+                          borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '95px', textAlign: 'center'
+                        }}>
+                          <span style={{ fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase' }}>Day {i + 1}</span>
+                          <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>
+                            {new Date(v.scheduled_time!).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}
+                          </span>
+                        </div>
+
+                        {/* Thumbnail Preview */}
+                        <div style={{ width: '110px', height: '62px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
+                          <img
+                            src={`${API_URL}/videos/${v.id}/thumbnail`}
+                            alt="Thumbnail"
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            onError={(e) => {
+                              e.currentTarget.style.display = 'none';
+                              const parent = e.currentTarget.parentElement;
+                              if (parent) {
+                                parent.innerHTML = '<div style="display:flex;width:100%;height:100%;justify-content:center;align-items:center;font-size:1.5rem">🎬</div>';
+                              }
+                            }}
+                          />
+                        </div>
+
+                        <div style={{ flexGrow: 1 }}>
+                          <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>{v.current_title || v.filename}</h3>
+                          
+                          {isEditing ? (
+                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
+                              <input
+                                type="date"
+                                className="form-input"
+                                style={{ width: '140px', padding: '4px 8px', fontSize: '0.8rem' }}
+                                value={rescheduleDate}
+                                onChange={e => setRescheduleDate(e.target.value)}
+                              />
+                              <input
+                                type="time"
+                                className="form-input"
+                                style={{ width: '100px', padding: '4px 8px', fontSize: '0.8rem' }}
+                                value={rescheduleTime}
+                                onChange={e => setRescheduleTime(e.target.value)}
+                              />
+                              <button className="btn btn-primary" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleRescheduleVideoSubmit(v.id)}>
+                                Save
+                              </button>
+                              <button className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => setReschedulingVideoId(null)}>
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px', margin: 0 }}>
+                              ⏰ Scheduled Time: <b>{new Date(v.scheduled_time!).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</b>
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Inline Actions */}
+                        {!isEditing && (
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <button
+                              className="btn btn-secondary"
+                              style={{ padding: '6px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                              onClick={() => {
+                                setReschedulingVideoId(v.id);
+                                const d = new Date(v.scheduled_time!);
+                                const pad = (n: number) => String(n).padStart(2, '0');
+                                setRescheduleDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+                                setRescheduleTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                              }}
+                            >
+                              🕒 Reschedule
+                            </button>
+                            <button
+                              className="btn"
+                              style={{
+                                padding: '6px 10px',
+                                fontSize: '0.75rem',
+                                background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                                color: '#fff',
+                                border: 'none',
+                                fontWeight: 600
+                              }}
+                              onClick={() => handlePublishNowSubmit(v.id)}
+                            >
+                              🚀 Publish Now
+                            </button>
+                            <button
+                              className="btn btn-danger"
+                              style={{ padding: '6px 10px', fontSize: '0.75rem' }}
+                              onClick={() => handleMoveToStagingSubmit(v.id)}
+                              title="Return to staging area"
+                            >
+                              📥 Draft
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+
+                  {channelFilteredVideos.length === 0 && (
+                    <div className="spinner-container" style={{ padding: '80px 20px' }}>
+                      <h2>No scheduled uploads</h2>
+                      <p style={{ color: 'var(--text-secondary)' }}>Approve staging drafts to schedule them for daily release.</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                // 21-Day Schedule Grid View
+                <div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
+                    {rolling21Days.map((date, idx) => {
+                      const dayLabel = idx === 0 ? 'Today' : idx === 1 ? 'Tomorrow' : date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' });
+                      
+                      // Find videos scheduled on this day
+                      const dayVideos = channelFilteredVideos.filter(v => {
+                        const vDate = new Date(v.scheduled_time!);
+                        return vDate.getFullYear() === date.getFullYear() &&
+                               vDate.getMonth() === date.getMonth() &&
+                               vDate.getDate() === date.getDate();
+                      });
+
+                      return (
+                        <div key={idx} className="card" style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '190px', border: dayVideos.length > 0 ? '1px solid var(--primary-light)' : '1px dashed var(--border-color)', background: dayVideos.length > 0 ? 'rgba(79, 70, 229, 0.02)' : 'rgba(0,0,0,0.1)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '6px' }}>
+                            <span style={{ fontSize: '0.78rem', fontWeight: 700, color: dayVideos.length > 0 ? 'var(--primary)' : 'var(--text-secondary)' }}>
+                              {dayLabel}
+                            </span>
+                            <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                              {date.toLocaleDateString('en-US', { day: 'numeric', month: 'numeric' })}
+                            </span>
+                          </div>
+
+                          {dayVideos.length > 0 ? (
+                            dayVideos.map(v => {
+                              const isEditing = reschedulingVideoId === v.id;
+                              return (
+                                <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px', flexGrow: 1 }}>
+                                  {/* Video Thumbnail */}
+                                  <div style={{ width: '100%', height: '100px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px', overflow: 'hidden', position: 'relative' }}>
+                                    <img
+                                      src={`${API_URL}/videos/${v.id}/thumbnail`}
+                                      alt="Thumbnail"
+                                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                      onError={(e) => {
+                                        e.currentTarget.style.display = 'none';
+                                        const parent = e.currentTarget.parentElement;
+                                        if (parent) {
+                                          parent.innerHTML = '<div style="display:flex;width:100%;height:100%;justify-content:center;align-items:center;font-size:2rem">🎬</div>';
+                                        }
+                                      }}
+                                    />
+                                    <span style={{ position: 'absolute', bottom: '4px', right: '4px', background: 'rgba(0,0,0,0.8)', padding: '2px 4px', borderRadius: '4px', fontSize: '0.68rem', fontWeight: 'bold' }}>
+                                      {new Date(v.scheduled_time!).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB
+                                    </span>
+                                  </div>
+
+                                  <h4 style={{ fontSize: '0.8rem', fontWeight: 600, margin: '2px 0', lineHeight: '1.3', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', textOverflow: 'ellipsis', height: '32px' }} title={v.current_title || v.filename}>
+                                    {v.current_title || v.filename}
+                                  </h4>
+
+                                  {isEditing ? (
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '4px' }}>
+                                      <input
+                                        type="date"
+                                        className="form-input"
+                                        style={{ padding: '3px 6px', fontSize: '0.72rem' }}
+                                        value={rescheduleDate}
+                                        onChange={e => setRescheduleDate(e.target.value)}
+                                      />
+                                      <input
+                                        type="time"
+                                        className="form-input"
+                                        style={{ padding: '3px 6px', fontSize: '0.72rem' }}
+                                        value={rescheduleTime}
+                                        onChange={e => setRescheduleTime(e.target.value)}
+                                      />
+                                      <div style={{ display: 'flex', gap: '4px' }}>
+                                        <button className="btn btn-primary" style={{ padding: '2px 6px', fontSize: '0.7rem', flex: 1 }} onClick={() => handleRescheduleVideoSubmit(v.id)}>
+                                          Save
+                                        </button>
+                                        <button className="btn btn-secondary" style={{ padding: '2px 6px', fontSize: '0.7rem', flex: 1 }} onClick={() => setReschedulingVideoId(null)}>
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div style={{ display: 'flex', gap: '4px', marginTop: 'auto' }}>
+                                      <button
+                                        className="btn btn-secondary"
+                                        style={{ padding: '3px 6px', fontSize: '0.68rem', flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                                        onClick={() => {
+                                          setReschedulingVideoId(v.id);
+                                          const d = new Date(v.scheduled_time!);
+                                          const pad = (n: number) => String(n).padStart(2, '0');
+                                          setRescheduleDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+                                          setRescheduleTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+                                        }}
+                                        title="Change schedule time"
+                                      >
+                                        🕒 Reschedule
+                                      </button>
+                                      <button
+                                        className="btn btn-danger"
+                                        style={{ padding: '3px 6px', fontSize: '0.68rem', width: '30px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                                        onClick={() => handleMoveToStagingSubmit(v.id)}
+                                        title="Move back to Staging"
+                                      >
+                                        📥
+                                      </button>
+                                      <button
+                                        className="btn"
+                                        style={{
+                                          padding: '3px 6px',
+                                          fontSize: '0.68rem',
+                                          background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
+                                          color: '#fff',
+                                          border: 'none',
+                                          fontWeight: 600,
+                                          width: '30px',
+                                          display: 'flex',
+                                          justifyContent: 'center',
+                                          alignItems: 'center'
+                                        }}
+                                        onClick={() => handlePublishNowSubmit(v.id)}
+                                        title="Upload immediately now"
+                                      >
+                                        🚀
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <div style={{ flexGrow: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', color: 'var(--text-muted)' }}>
+                              <span style={{ fontSize: '1.3rem', marginBottom: '4px' }}>➕</span>
+                              <span style={{ fontSize: '0.72rem' }}>Slot Kosong</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {currentTab === 'analytics' && (
           <div>
@@ -3809,42 +4230,78 @@ function App() {
               </div>
 
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />
-              <h3>AI Metadata generation templates</h3>
-
-              <div className="form-group">
-                <label htmlFor="chan-title-temp">Preset Title Template</label>
-                <input
-                  id="chan-title-temp"
-                  type="text"
-                  className="form-input"
-                  value={chanTitleTemp}
-                  onChange={e => setChanTitleTemp(e.target.value)}
-                  placeholder="e.g. {mood} lofi mix for {activity}"
-                />
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3 style={{ margin: 0 }}>Metadata Templates Rotation</h3>
+                <button type="button" className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8rem' }} onClick={handleAddTemplate}>
+                  ➕ Add Template
+                </button>
               </div>
+              <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', margin: '4px 0 16px 0' }}>
+                Create multiple metadata versions. A random version will be chosen for each uploaded video to implement visual A/B Testing.
+              </p>
 
-              <div className="form-group">
-                <label htmlFor="chan-desc-temp">Preset Description Template</label>
-                <textarea
-                  id="chan-desc-temp"
-                  className="form-textarea"
-                  value={chanDescTemp}
-                  onChange={e => setChanDescTemp(e.target.value)}
-                  placeholder="Default video summary, links, and hashtags presets..."
-                />
-              </div>
+              {chanTemplates.map((tpl, idx) => (
+                <div key={idx} style={{ padding: '16px', background: 'rgba(255, 255, 255, 0.02)', border: '1px solid var(--border-color)', borderRadius: '8px', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--primary)' }}>Template Version #{idx + 1}</span>
+                    {chanTemplates.length > 1 && (
+                      <button type="button" className="btn btn-danger" style={{ padding: '2px 8px', fontSize: '0.7rem' }} onClick={() => handleRemoveTemplate(idx)}>
+                        🗑️ Delete
+                      </button>
+                    )}
+                  </div>
 
-              <div className="form-group">
-                <label htmlFor="chan-tags">Preset Tags (Comma-separated)</label>
-                <input
-                  id="chan-tags"
-                  type="text"
-                  className="form-input"
-                  value={chanTags}
-                  onChange={e => setChanTags(e.target.value)}
-                  placeholder="lofi, lofigirl, relaxing"
-                />
-              </div>
+                  <div className="form-group" style={{ marginBottom: '10px' }}>
+                    <label style={{ fontSize: '0.75rem', marginBottom: '2px' }}>Template ID (A/B label, e.g. sleep_mix_v1)</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                      value={tpl.id || ''}
+                      onChange={e => handleUpdateTemplate(idx, 'id', e.target.value)}
+                      placeholder="e.g. mix_chill_v1"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '10px' }}>
+                    <label style={{ fontSize: '0.75rem', marginBottom: '2px' }}>Title Template</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                      value={tpl.title_template || ''}
+                      onChange={e => handleUpdateTemplate(idx, 'title_template', e.target.value)}
+                      placeholder="e.g. {mood} lofi mix for {activity}"
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '10px' }}>
+                    <label style={{ fontSize: '0.75rem', marginBottom: '2px' }}>Description Template</label>
+                    <textarea
+                      className="form-textarea"
+                      style={{ padding: '6px 10px', fontSize: '0.85rem', minHeight: '80px' }}
+                      value={tpl.description_template || ''}
+                      onChange={e => handleUpdateTemplate(idx, 'description_template', e.target.value)}
+                      placeholder="Description templates..."
+                      required
+                    />
+                  </div>
+
+                  <div className="form-group" style={{ marginBottom: '0px' }}>
+                    <label style={{ fontSize: '0.75rem', marginBottom: '2px' }}>Tags (Comma-separated)</label>
+                    <input
+                      type="text"
+                      className="form-input"
+                      style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                      value={tpl.tags || ''}
+                      onChange={e => handleUpdateTemplate(idx, 'tags', e.target.value)}
+                      placeholder="lofi, relax, chill"
+                    />
+                  </div>
+                </div>
+              ))}
 
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />
               <h3>YouTube Defaults & Channel Presets</h3>

@@ -173,15 +173,36 @@ class IngestionService:
             db.add(video)
             await db.flush()
 
-            # B. Extract frame screenshot
-            raw_thumb_dir = os.path.join(channel.folder_path, "thumbnails", "raw")
-            os.makedirs(raw_thumb_dir, exist_ok=True)
-            screenshot_path = os.path.join(raw_thumb_dir, f"vid_{video.id}_screenshot.jpg")
+            # B. Extract frame screenshot or detect manual thumbnail
+            base_name, _ = os.path.splitext(filename)
+            thumb_dir = os.path.join(channel.folder_path, "thumbnails")
+            manual_thumb_path = None
+            
+            # Check for existence of manual thumbnail files
+            for ext in [".jpg", ".png", ".jpeg", ".JPG", ".PNG", ".JPEG"]:
+                p = os.path.join(thumb_dir, f"{base_name}{ext}")
+                if os.path.exists(p):
+                    manual_thumb_path = p
+                    break
 
-            logger.info("extracting_screenshot", video_id=video.id, path=screenshot_path)
-            success = extract_screenshot(file_path, screenshot_path, video.duration_seconds or 0)
-            if not success:
-                raise RuntimeError(f"ffmpeg failed to extract screenshot for video ID {video.id}")
+            screenshot_path = None
+            if manual_thumb_path:
+                logger.info("manual_thumbnail_detected", video_id=video.id, path=manual_thumb_path)
+                generated_dir = os.path.join(channel.folder_path, "thumbnails", "generated")
+                os.makedirs(generated_dir, exist_ok=True)
+                _, thumb_ext = os.path.splitext(manual_thumb_path)
+                screenshot_path = os.path.join(generated_dir, f"vid_{video.id}_thumb_manual{thumb_ext}")
+                import shutil
+                shutil.copy2(manual_thumb_path, screenshot_path)
+            else:
+                raw_thumb_dir = os.path.join(channel.folder_path, "thumbnails", "raw")
+                os.makedirs(raw_thumb_dir, exist_ok=True)
+                screenshot_path = os.path.join(raw_thumb_dir, f"vid_{video.id}_screenshot.jpg")
+
+                logger.info("extracting_screenshot", video_id=video.id, path=screenshot_path)
+                success = extract_screenshot(file_path, screenshot_path, video.duration_seconds or 0)
+                if not success:
+                    raise RuntimeError(f"ffmpeg failed to extract screenshot for video ID {video.id}")
 
             video.screenshot_path = screenshot_path
             db.add(video)
@@ -236,31 +257,44 @@ class IngestionService:
             video.current_description = draft_data["description"]
             video.current_tags = draft_data["tags"]
             video.ai_review_note = draft_data.get("ai_review_note")
+            video.metadata_template_id = draft_data.get("metadata_template_id")
             db.add(video)
             await db.flush()
 
-            # D. Generate 3 thumbnail draft options
-            logger.info("generating_thumbnail_options", video_id=video.id)
-            thumbnail_options = await self.thumbnail_service.generate_options(
-                screenshot_path=screenshot_path,
-                channel_name=channel.name,
-                genre=channel.genre,
-                style_prompt=channel.thumbnail_style_prompt or "ambient soft lofi artwork",
-                video_title=draft_data["title"],
-                video_id=video.id,
-                channel_folder_path=channel.folder_path
-            )
-
-            for opt in thumbnail_options:
+            # D. Generate 3 thumbnail draft options (or save manual thumbnail)
+            if manual_thumb_path:
+                logger.info("registering_manual_thumbnail_draft", video_id=video.id)
                 thumb_draft = ThumbnailDraft(
                     video_id=video.id,
-                    image_path=opt["image_path"],
-                    style_name=opt["style_name"],
-                    prompt_used=opt["prompt_used"],
-                    confidence_score=opt["confidence_score"],
-                    is_selected=opt["is_selected"]
+                    image_path=screenshot_path,
+                    style_name="manual_upload",
+                    prompt_used="User uploaded custom thumbnail manually",
+                    confidence_score=Decimal("100.00"),
+                    is_selected=True
                 )
                 db.add(thumb_draft)
+            else:
+                logger.info("generating_thumbnail_options", video_id=video.id)
+                thumbnail_options = await self.thumbnail_service.generate_options(
+                    screenshot_path=screenshot_path,
+                    channel_name=channel.name,
+                    genre=channel.genre,
+                    style_prompt=channel.thumbnail_style_prompt or "ambient soft lofi artwork",
+                    video_title=draft_data["title"],
+                    video_id=video.id,
+                    channel_folder_path=channel.folder_path
+                )
+
+                for opt in thumbnail_options:
+                    thumb_draft = ThumbnailDraft(
+                        video_id=video.id,
+                        image_path=opt["image_path"],
+                        style_name=opt["style_name"],
+                        prompt_used=opt["prompt_used"],
+                        confidence_score=opt["confidence_score"],
+                        is_selected=opt["is_selected"]
+                    )
+                    db.add(thumb_draft)
             await db.flush()
 
             # E. Transition status and schedule

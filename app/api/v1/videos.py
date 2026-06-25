@@ -1002,3 +1002,146 @@ async def force_queue_patrol(
     result = await asyncio.to_thread(auto_patrol_queue_integrity)
     
     return result
+
+
+@router.get("/{id}/thumbnail")
+async def get_active_thumbnail(
+    id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Serve the active selected thumbnail image file. Fallback to screenshot if none selected."""
+    # Find selected thumbnail
+    stmt_thumb = select(ThumbnailDraft).where(
+        ThumbnailDraft.video_id == id,
+        ThumbnailDraft.is_selected == True
+    )
+    res_thumb = await db.execute(stmt_thumb)
+    draft = res_thumb.scalar_one_or_none()
+    
+    if draft and draft.image_path and os.path.exists(draft.image_path):
+        return FileResponse(draft.image_path)
+        
+    # Fallback to screenshot
+    stmt_vid = select(Video).where(Video.id == id)
+    res_vid = await db.execute(stmt_vid)
+    video = res_vid.scalar_one_or_none()
+    
+    if video and video.screenshot_path and os.path.exists(video.screenshot_path):
+        return FileResponse(video.screenshot_path)
+        
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active thumbnail or screenshot found")
+
+
+class RescheduleRequest(BaseModel):
+    scheduled_time: datetime
+
+@router.post("/{id}/reschedule", response_model=VideoResponse)
+async def reschedule_video(
+    id: int,
+    req: RescheduleRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Inline reschedule a video's upload time."""
+    logger.info("api_reschedule_video_called", video_id=id, new_time=req.scheduled_time, user_id=current_user.id)
+    
+    stmt = select(Video).where(Video.id == id)
+    res = await db.execute(stmt)
+    video = res.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+        
+    video.scheduled_time = req.scheduled_time
+    db.add(video)
+    
+    # Audit log event
+    log_entry = SystemLog(
+        level=LogLevel.INFO,
+        service="video",
+        event_type="video_rescheduled",
+        message=f"Video ID {id} rescheduled to {req.scheduled_time} by user ID {current_user.id}",
+        video_id=video.id,
+        channel_id=video.channel_id,
+        user_id=current_user.id
+    )
+    db.add(log_entry)
+    
+    await db.commit()
+    await db.refresh(video)
+    return video
+
+
+@router.post("/{id}/publish-now", response_model=VideoResponse)
+async def publish_video_now(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Force upload/publish the video immediately to YouTube, bypassing the schedule."""
+    logger.info("api_publish_video_now_called", video_id=id, user_id=current_user.id)
+    
+    stmt = select(Video).where(Video.id == id)
+    res = await db.execute(stmt)
+    video = res.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+        
+    video.status = VideoStatus.APPROVED
+    video.scheduled_time = datetime.now()
+    db.add(video)
+    
+    # Audit log
+    log_entry = SystemLog(
+        level=LogLevel.INFO,
+        service="video",
+        event_type="video_publish_now",
+        message=f"Video ID {id} triggered for immediate publish by user ID {current_user.id}",
+        video_id=video.id,
+        channel_id=video.channel_id,
+        user_id=current_user.id
+    )
+    db.add(log_entry)
+    await db.commit()
+    await db.refresh(video)
+    
+    # Dispatch to Celery
+    from app.tasks.upload import upload_video_task
+    upload_video_task.delay(video.id)
+    
+    return video
+
+
+@router.post("/{id}/move-to-staging", response_model=VideoResponse)
+async def move_video_to_staging(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Move an approved or queued video back to STAGING status."""
+    logger.info("api_move_video_to_staging_called", video_id=id, user_id=current_user.id)
+    
+    stmt = select(Video).where(Video.id == id)
+    res = await db.execute(stmt)
+    video = res.scalar_one_or_none()
+    if not video:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
+        
+    video.status = VideoStatus.STAGING
+    video.scheduled_time = None
+    db.add(video)
+    
+    # Audit log
+    log_entry = SystemLog(
+        level=LogLevel.INFO,
+        service="video",
+        event_type="video_returned_to_staging",
+        message=f"Video ID {id} returned to STAGING from schedule by user ID {current_user.id}",
+        video_id=video.id,
+        channel_id=video.channel_id,
+        user_id=current_user.id
+    )
+    db.add(log_entry)
+    await db.commit()
+    await db.refresh(video)
+    
+    return video

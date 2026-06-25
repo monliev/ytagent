@@ -14,6 +14,7 @@ class ChannelBase(BaseModel):
     preset_description_template: Optional[str] = None
     preset_tags: Optional[List[str]] = None
     preset_social_links: Optional[Dict[str, Any]] = None
+    preset_templates: Optional[List[Dict[str, Any]]] = None
     thumbnail_style_name: Optional[str] = None
     thumbnail_style_prompt: Optional[str] = None
     gcp_project_id: Optional[str] = None
@@ -38,6 +39,7 @@ class ChannelUpdate(BaseModel):
     preset_description_template: Optional[str] = None
     preset_tags: Optional[List[str]] = None
     preset_social_links: Optional[Dict[str, Any]] = None
+    preset_templates: Optional[List[Dict[str, Any]]] = None
     thumbnail_style_name: Optional[str] = None
     thumbnail_style_prompt: Optional[str] = None
     gcp_project_id: Optional[str] = None

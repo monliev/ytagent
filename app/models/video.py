@@ -59,6 +59,7 @@ class Video(Base):
     category_id: Mapped[str] = mapped_column(String(16), default="10", nullable=False)
     made_for_kids: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ai_review_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    metadata_template_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Scheduling & Upload timestamps
     scheduled_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)

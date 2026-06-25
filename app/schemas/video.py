@@ -40,6 +40,7 @@ class VideoResponse(BaseModel):
     category_id: str = "10"
     made_for_kids: bool = False
     ai_review_note: Optional[str] = None
+    metadata_template_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
