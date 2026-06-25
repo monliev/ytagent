@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import structlog
@@ -95,9 +95,23 @@ async def register_webhook(db: AsyncSession = Depends(get_db)):
 @router.post("/webhook", status_code=status.HTTP_200_OK)
 async def telegram_webhook(
     update: TelegramUpdate,
+    x_telegram_bot_api_secret_token: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db)
 ):
     """Webhook callback endpoint registered with Telegram to receive button clicks."""
+    # Verify Telegram Webhook Secret Token to prevent spoofing
+    import hashlib
+    expected_token = hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).hexdigest()
+    if x_telegram_bot_api_secret_token != expected_token:
+        logger.warning(
+            "telegram_webhook_invalid_secret_token", 
+            received=x_telegram_bot_api_secret_token
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Invalid webhook secret token."
+        )
+
     logger.info("telegram_webhook_received", update_id=update.update_id)
     
     cb = update.callback_query

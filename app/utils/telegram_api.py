@@ -109,10 +109,20 @@ class TelegramAPI:
             return {"ok": True, "skipped": True, "reason": "placeholder_token"}
 
         try:
+            # Generate a secret token using a SHA-256 hash of the application's SECRET_KEY
+            import hashlib
+            secret_token = hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).hexdigest()
+
+            payload = {
+                "url": webhook_url,
+                "allowed_updates": ["callback_query", "message"],
+                "secret_token": secret_token
+            }
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     url,
-                    json={"url": webhook_url, "allowed_updates": ["callback_query", "message"]},
+                    json=payload,
                     timeout=10.0,
                 )
                 data = response.json()

@@ -365,9 +365,14 @@ async def test_telegram_webhook_callback(db_session):
         }
     }
     
+    import hashlib
+    from app.core.config import settings
+    expected_token = hashlib.sha256(settings.SECRET_KEY.encode("utf-8")).hexdigest()
+    headers = {"X-Telegram-Bot-Api-Secret-Token": expected_token}
+    
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        response = await ac.post("/api/v1/telegram/webhook", json=payload)
+        response = await ac.post("/api/v1/telegram/webhook", json=payload, headers=headers)
         assert response.status_code == 200
         assert response.json()["status"] == "approved"
         

@@ -59,4 +59,7 @@ class Settings(BaseSettings):
     # Timezone
     TZ: str = "Asia/Jakarta"
 
+    # CORS Allowed Origins (comma-separated)
+    CORS_ORIGINS: str = "http://localhost,http://localhost:5173,http://localhost:8000,http://127.0.0.1"
+
 settings = Settings()
