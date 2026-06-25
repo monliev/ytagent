@@ -2296,23 +2296,44 @@ function App() {
 
               {scheduleViewMode === 'list' ? (
                 // Timeline List View
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div className="card" style={{ padding: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                   {channelFilteredVideos.map((v, i) => {
                     const isEditing = reschedulingVideoId === v.id;
                     return (
-                      <div key={v.id} className="card" style={{ padding: '16px', display: 'flex', gap: '20px', alignItems: 'center', borderLeft: '4px solid var(--primary)' }}>
+                      <div
+                        key={v.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '16px',
+                          padding: '10px 16px',
+                          borderBottom: i < channelFilteredVideos.length - 1 ? '1px solid var(--border-color)' : 'none',
+                          borderLeft: '4px solid var(--primary)',
+                          background: 'transparent',
+                          transition: 'background 0.2s'
+                        }}
+                      >
+                        {/* Day/Date Badge */}
                         <div style={{
-                          padding: '10px 16px', backgroundColor: 'var(--primary-light)', color: 'var(--primary)',
-                          borderRadius: '8px', display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: '95px', textAlign: 'center'
+                          padding: '4px 8px',
+                          backgroundColor: 'var(--primary-light)',
+                          color: 'var(--primary)',
+                          borderRadius: '6px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          minWidth: '75px',
+                          textAlign: 'center',
+                          flexShrink: 0
                         }}>
-                          <span style={{ fontSize: '0.72rem', fontWeight: 600, textTransform: 'uppercase' }}>Day {i + 1}</span>
-                          <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>
+                          <span style={{ fontSize: '0.6rem', fontWeight: 600, textTransform: 'uppercase', opacity: 0.8 }}>Day {i + 1}</span>
+                          <span style={{ fontSize: '0.85rem', fontWeight: 800 }}>
                             {new Date(v.scheduled_time!).toLocaleDateString('id-ID', { day: '2-digit', month: 'short' })}
                           </span>
                         </div>
 
                         {/* Thumbnail Preview */}
-                        <div style={{ width: '110px', height: '62px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px', overflow: 'hidden', flexShrink: 0 }}>
+                        <div style={{ width: '80px', height: '45px', background: 'rgba(0,0,0,0.2)', borderRadius: '4px', overflow: 'hidden', flexShrink: 0 }}>
                           <img
                             src={`${API_URL}/videos/${v.id}/thumbnail`}
                             alt="Thumbnail"
@@ -2321,51 +2342,55 @@ function App() {
                               e.currentTarget.style.display = 'none';
                               const parent = e.currentTarget.parentElement;
                               if (parent) {
-                                parent.innerHTML = '<div style="display:flex;width:100%;height:100%;justify-content:center;align-items:center;font-size:1.5rem">🎬</div>';
+                                parent.innerHTML = '<div style="display:flex;width:100%;height:100%;justify-content:center;align-items:center;font-size:1.1rem">🎬</div>';
                               }
                             }}
                           />
                         </div>
 
-                        <div style={{ flexGrow: 1 }}>
-                          <h3 style={{ fontSize: '1rem', fontWeight: 600, margin: 0, color: 'var(--text-primary)' }}>{v.current_title || v.filename}</h3>
+                        {/* Title and Scheduled time */}
+                        <div style={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <h4 style={{ fontSize: '0.88rem', fontWeight: 600, margin: 0, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.current_title || v.filename}>
+                            {v.current_title || v.filename}
+                          </h4>
+                          {!isEditing && (
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              ⏰ Scheduled: <b style={{ color: 'var(--primary-light)' }}>{new Date(v.scheduled_time!).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</b>
+                            </span>
+                          )}
                           
-                          {isEditing ? (
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '8px' }}>
+                          {isEditing && (
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center', marginTop: '4px' }}>
                               <input
                                 type="date"
                                 className="form-input"
-                                style={{ width: '140px', padding: '4px 8px', fontSize: '0.8rem' }}
+                                style={{ width: '130px', padding: '2px 6px', fontSize: '0.75rem', height: '26px' }}
                                 value={rescheduleDate}
                                 onChange={e => setRescheduleDate(e.target.value)}
                               />
                               <input
                                 type="time"
                                 className="form-input"
-                                style={{ width: '100px', padding: '4px 8px', fontSize: '0.8rem' }}
+                                style={{ width: '90px', padding: '2px 6px', fontSize: '0.75rem', height: '26px' }}
                                 value={rescheduleTime}
                                 onChange={e => setRescheduleTime(e.target.value)}
                               />
-                              <button className="btn btn-primary" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => handleRescheduleVideoSubmit(v.id)}>
+                              <button className="btn btn-primary" style={{ padding: '2px 8px', fontSize: '0.7rem', height: '26px' }} onClick={() => handleRescheduleVideoSubmit(v.id)}>
                                 Save
                               </button>
-                              <button className="btn btn-secondary" style={{ padding: '4px 8px', fontSize: '0.75rem' }} onClick={() => setReschedulingVideoId(null)}>
+                              <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '0.7rem', height: '26px' }} onClick={() => setReschedulingVideoId(null)}>
                                 Cancel
                               </button>
                             </div>
-                          ) : (
-                            <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px', margin: 0 }}>
-                              ⏰ Scheduled Time: <b>{new Date(v.scheduled_time!).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })} WIB</b>
-                            </p>
                           )}
                         </div>
 
                         {/* Inline Actions */}
                         {!isEditing && (
-                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                             <button
                               className="btn btn-secondary"
-                              style={{ padding: '6px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '4px' }}
+                              style={{ padding: '4px 8px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '3px' }}
                               onClick={() => {
                                 setReschedulingVideoId(v.id);
                                 const d = new Date(v.scheduled_time!);
@@ -2379,20 +2404,23 @@ function App() {
                             <button
                               className="btn"
                               style={{
-                                padding: '6px 10px',
-                                fontSize: '0.75rem',
+                                padding: '4px 8px',
+                                fontSize: '0.72rem',
                                 background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
                                 color: '#fff',
                                 border: 'none',
-                                fontWeight: 600
+                                fontWeight: 600,
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '3px'
                               }}
                               onClick={() => handlePublishNowSubmit(v.id)}
                             >
-                              🚀 Publish Now
+                              🚀 Publish
                             </button>
                             <button
                               className="btn btn-danger"
-                              style={{ padding: '6px 10px', fontSize: '0.75rem' }}
+                              style={{ padding: '4px 8px', fontSize: '0.72rem' }}
                               onClick={() => handleMoveToStagingSubmit(v.id)}
                               title="Return to staging area"
                             >
@@ -2416,7 +2444,7 @@ function App() {
                 <div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px' }}>
                     {rolling21Days.map((date, idx) => {
-                      const dayLabel = idx === 0 ? 'Today' : idx === 1 ? 'Tomorrow' : date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' });
+                      const dayLabel = idx === 0 ? 'Hari Ini' : idx === 1 ? 'Besok' : date.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short' });
                       
                       // Find videos scheduled on this day
                       const dayVideos = channelFilteredVideos.filter(v => {
@@ -2443,7 +2471,7 @@ function App() {
                               return (
                                 <div key={v.id} style={{ display: 'flex', flexDirection: 'column', gap: '6px', flexGrow: 1 }}>
                                   {/* Video Thumbnail */}
-                                  <div style={{ width: '100%', height: '100px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px', overflow: 'hidden', position: 'relative' }}>
+                                  <div style={{ width: '100%', aspectRatio: '16/9', background: 'rgba(0,0,0,0.2)', borderRadius: '6px', overflow: 'hidden', position: 'relative' }}>
                                     <img
                                       src={`${API_URL}/videos/${v.id}/thumbnail`}
                                       alt="Thumbnail"
