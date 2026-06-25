@@ -12,6 +12,11 @@ celery_app.conf.update(
     result_serializer="json",
     timezone=settings.TZ,
     enable_utc=True,
+    imports=[
+        "app.tasks.upload",
+        "app.tasks.maintenance",
+        "app.tasks.analytics"
+    ],
 
     # CRITICAL: Strict sequential execution requires worker concurrency = 1
     worker_concurrency=1,
