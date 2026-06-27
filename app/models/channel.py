@@ -1,6 +1,6 @@
 from datetime import datetime, time
 from typing import Optional, Any
-from sqlalchemy import BigInteger, Time, Boolean, String, Text, JSON, DateTime, func
+from sqlalchemy import BigInteger, Integer, Time, Boolean, String, Text, JSON, DateTime, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -30,6 +30,8 @@ class Channel(Base):
     preset_social_links: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
     preset_templates: Mapped[Optional[list[dict[str, Any]]]] = mapped_column(JSON, nullable=True)
     title_pool: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    upload_days_interval: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    preferred_upload_times: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Thumbnail preset
     thumbnail_style_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

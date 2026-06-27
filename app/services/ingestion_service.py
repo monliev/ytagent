@@ -17,6 +17,7 @@ from app.models import (
     LogLevel
 )
 from app.utils.ffmpeg import get_video_metadata, extract_screenshot
+from app.utils.scheduling import calculate_next_schedule_time
 from app.services.metadata_service import MetadataService
 from app.services.thumbnail_service import ThumbnailService
 from app.services.notification_service import NotificationService
@@ -186,23 +187,28 @@ class IngestionService:
                     break
 
             screenshot_path = None
-            if manual_thumb_path:
-                logger.info("manual_thumbnail_detected", video_id=video.id, path=manual_thumb_path)
-                generated_dir = os.path.join(channel.folder_path, "thumbnails", "generated")
-                os.makedirs(generated_dir, exist_ok=True)
-                _, thumb_ext = os.path.splitext(manual_thumb_path)
-                screenshot_path = os.path.join(generated_dir, f"vid_{video.id}_thumb_manual{thumb_ext}")
-                import shutil
-                shutil.copy2(manual_thumb_path, screenshot_path)
-            else:
-                raw_thumb_dir = os.path.join(channel.folder_path, "thumbnails", "raw")
-                os.makedirs(raw_thumb_dir, exist_ok=True)
-                screenshot_path = os.path.join(raw_thumb_dir, f"vid_{video.id}_screenshot.jpg")
+            try:
+                if manual_thumb_path:
+                    logger.info("manual_thumbnail_detected", video_id=video.id, path=manual_thumb_path)
+                    generated_dir = os.path.join(channel.folder_path, "thumbnails", "generated")
+                    os.makedirs(generated_dir, exist_ok=True)
+                    _, thumb_ext = os.path.splitext(manual_thumb_path)
+                    screenshot_path = os.path.join(generated_dir, f"vid_{video.id}_thumb_manual{thumb_ext}")
+                    import shutil
+                    shutil.copy2(manual_thumb_path, screenshot_path)
+                else:
+                    raw_thumb_dir = os.path.join(channel.folder_path, "thumbnails", "raw")
+                    os.makedirs(raw_thumb_dir, exist_ok=True)
+                    screenshot_path = os.path.join(raw_thumb_dir, f"vid_{video.id}_screenshot.jpg")
 
-                logger.info("extracting_screenshot", video_id=video.id, path=screenshot_path)
-                success = extract_screenshot(file_path, screenshot_path, video.duration_seconds or 0)
-                if not success:
-                    raise RuntimeError(f"ffmpeg failed to extract screenshot for video ID {video.id}")
+                    logger.info("extracting_screenshot", video_id=video.id, path=screenshot_path)
+                    success = extract_screenshot(file_path, screenshot_path, video.duration_seconds or 0)
+                    if not success:
+                        logger.warning("ffmpeg_failed_to_extract_screenshot", video_id=video.id)
+                        screenshot_path = None
+            except Exception as e:
+                logger.warning("failed_during_screenshot_handling", video_id=video.id, error=str(e))
+                screenshot_path = None
 
             video.screenshot_path = screenshot_path
             db.add(video)
@@ -219,14 +225,16 @@ class IngestionService:
 
             # Check if the channel qualifies for auto-approve:
             # 1. auto_approve is True
-            # 2. preset templates are set
-            # 3. gcp_project_id is set
-            # 4. GCP project credentials exist & active
+            # 2. Has a title source (preset template, title pool, or list template)
+            # 3. Has active GCP credentials
             qualifies_for_auto_approve = False
             if channel.auto_approve:
-                if (channel.preset_title_template and 
-                    channel.preset_description_template and 
-                    channel.gcp_project_id):
+                has_title_source = bool(
+                    channel.preset_title_template or 
+                    (channel.title_pool and channel.title_pool.strip()) or 
+                    (channel.preset_templates and len(channel.preset_templates) > 0)
+                )
+                if channel.gcp_project_id and has_title_source:
                     # Check for active GCP project credentials
                     stmt_creds = select(ChannelCredentials).where(
                         ChannelCredentials.channel_id == channel.id,
@@ -262,39 +270,43 @@ class IngestionService:
             await db.flush()
 
             # D. Generate 3 thumbnail draft options (or save manual thumbnail)
-            if manual_thumb_path:
-                logger.info("registering_manual_thumbnail_draft", video_id=video.id)
-                thumb_draft = ThumbnailDraft(
-                    video_id=video.id,
-                    image_path=screenshot_path,
-                    style_name="manual_upload",
-                    prompt_used="User uploaded custom thumbnail manually",
-                    confidence_score=Decimal("100.00"),
-                    is_selected=True
-                )
-                db.add(thumb_draft)
-            else:
-                logger.info("generating_thumbnail_options", video_id=video.id)
-                thumbnail_options = await self.thumbnail_service.generate_options(
-                    screenshot_path=screenshot_path,
-                    channel_name=channel.name,
-                    genre=channel.genre,
-                    style_prompt=channel.thumbnail_style_prompt or "ambient soft lofi artwork",
-                    video_title=draft_data["title"],
-                    video_id=video.id,
-                    channel_folder_path=channel.folder_path
-                )
+            if screenshot_path:
+                try:
+                    if manual_thumb_path:
+                        logger.info("registering_manual_thumbnail_draft", video_id=video.id)
+                        thumb_draft = ThumbnailDraft(
+                            video_id=video.id,
+                            image_path=screenshot_path,
+                            style_name="manual_upload",
+                            prompt_used="User uploaded custom thumbnail manually",
+                            confidence_score=Decimal("100.00"),
+                            is_selected=True
+                        )
+                        db.add(thumb_draft)
+                    else:
+                        logger.info("generating_thumbnail_options", video_id=video.id)
+                        thumbnail_options = await self.thumbnail_service.generate_options(
+                            screenshot_path=screenshot_path,
+                            channel_name=channel.name,
+                            genre=channel.genre,
+                            style_prompt=channel.thumbnail_style_prompt or "ambient soft lofi artwork",
+                            video_title=draft_data["title"],
+                            video_id=video.id,
+                            channel_folder_path=channel.folder_path
+                        )
 
-                for opt in thumbnail_options:
-                    thumb_draft = ThumbnailDraft(
-                        video_id=video.id,
-                        image_path=opt["image_path"],
-                        style_name=opt["style_name"],
-                        prompt_used=opt["prompt_used"],
-                        confidence_score=opt["confidence_score"],
-                        is_selected=opt["is_selected"]
-                    )
-                    db.add(thumb_draft)
+                        for opt in thumbnail_options:
+                            thumb_draft = ThumbnailDraft(
+                                video_id=video.id,
+                                image_path=opt["image_path"],
+                                style_name=opt["style_name"],
+                                prompt_used=opt["prompt_used"],
+                                confidence_score=opt["confidence_score"],
+                                is_selected=opt["is_selected"]
+                            )
+                            db.add(thumb_draft)
+                except Exception as e:
+                    logger.warning("failed_generating_thumbnail_options_non_blocking", video_id=video.id, error=str(e))
             await db.flush()
 
             # E. Transition status and schedule
@@ -302,26 +314,8 @@ class IngestionService:
                 video.status = VideoStatus.APPROVED
                 
                 # Compute schedule time if not set
-                stmt_max = select(func.max(Video.scheduled_time)).where(
-                    Video.channel_id == video.channel_id,
-                    Video.scheduled_time >= datetime.now(),
-                    Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED, VideoStatus.UPLOADING, VideoStatus.UPLOADED])
-                )
-                res_max = await db.execute(stmt_max)
-                max_sched = res_max.scalar()
-                
-                pref_time = channel.preferred_time or time(10, 0, 0)
-                
-                if max_sched:
-                    scheduled_dt = datetime.combine(max_sched.date(), pref_time) + timedelta(days=1)
-                else:
-                    today_dt = datetime.combine(date.today(), pref_time)
-                    if today_dt > datetime.now():
-                        scheduled_dt = today_dt
-                    else:
-                        scheduled_dt = today_dt + timedelta(days=1)
-                        
-                video.scheduled_time = scheduled_dt
+                if not video.scheduled_time:
+                    video.scheduled_time = await calculate_next_schedule_time(db, channel)
             else:
                 video.status = VideoStatus.STAGING
                 

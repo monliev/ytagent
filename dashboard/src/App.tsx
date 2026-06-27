@@ -84,6 +84,8 @@ interface Channel {
   preset_social_links: any | null;
   preset_templates?: any[] | null;
   title_pool: string | null;
+  upload_days_interval: number;
+  preferred_upload_times: string | null;
   thumbnail_style_name: string | null;
   thumbnail_style_prompt: string | null;
   gcp_project_id: string | null;
@@ -233,6 +235,8 @@ function App() {
   const [chanAiGenerated, setChanAiGenerated] = useState(false);
   const [chanCategoryId, setChanCategoryId] = useState('');
   const [chanMadeForKids, setChanMadeForKids] = useState(false);
+  const [chanUploadDaysInterval, setChanUploadDaysInterval] = useState(1);
+  const [chanPreferredUploadTimes, setChanPreferredUploadTimes] = useState('');
 
   // New Video Staging overrides form states
   const [editPlaylistId, setEditPlaylistId] = useState('');
@@ -1496,6 +1500,8 @@ function App() {
     setChanAiGenerated(false);
     setChanCategoryId('');
     setChanMadeForKids(false);
+    setChanUploadDaysInterval(1);
+    setChanPreferredUploadTimes('');
     setChanTemplates([{
       id: 'default',
       title_template: '',
@@ -1529,6 +1535,8 @@ function App() {
     setChanAiGenerated(channel.ai_generated || false);
     setChanCategoryId(channel.category_id || '');
     setChanMadeForKids(channel.made_for_kids || false);
+    setChanUploadDaysInterval(channel.upload_days_interval || 1);
+    setChanPreferredUploadTimes(channel.preferred_upload_times || '');
     
     if (channel.preset_templates && channel.preset_templates.length > 0) {
       setChanTemplates(channel.preset_templates.map(t => ({
@@ -1614,6 +1622,8 @@ function App() {
       ai_generated: chanAiGenerated,
       category_id: chanCategoryId || null,
       made_for_kids: chanMadeForKids,
+      upload_days_interval: Number(chanUploadDaysInterval),
+      preferred_upload_times: chanPreferredUploadTimes || null,
       preset_templates: processedTemplates.length > 0 ? processedTemplates : null,
     };
 
@@ -4384,6 +4394,39 @@ function App() {
                     />
                     Auto Approve
                   </label>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '16px' }}>
+                <div className="form-group">
+                  <label htmlFor="chan-upload-days-interval">Upload Days Interval</label>
+                  <select
+                    id="chan-upload-days-interval"
+                    className="form-input"
+                    value={chanUploadDaysInterval}
+                    onChange={e => setChanUploadDaysInterval(Number(e.target.value))}
+                  >
+                    <option value={1}>Setiap 1 Hari (1x Sehari atau Kustom)</option>
+                    <option value={2}>Setiap 2 Hari</option>
+                    <option value={3}>Setiap 3 Hari</option>
+                    <option value={4}>Setiap 4 Hari</option>
+                    <option value={5}>Setiap 5 Hari</option>
+                    <option value={7}>Setiap 7 Hari (1 Minggu)</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label htmlFor="chan-preferred-upload-times">Custom Publish Times (HH:MM, comma separated)</label>
+                  <input
+                    id="chan-preferred-upload-times"
+                    type="text"
+                    className="form-input"
+                    value={chanPreferredUploadTimes}
+                    onChange={e => setChanPreferredUploadTimes(e.target.value)}
+                    placeholder="e.g. 10:00, 18:00, 22:00"
+                  />
+                  <p style={{ fontSize: '0.72rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    Dikosongkan jika ingin menggunakan Preferred Daily Time tunggal di atas.
+                  </p>
                 </div>
               </div>
 

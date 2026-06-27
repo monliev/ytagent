@@ -17,6 +17,7 @@ from app.models.thumbnail_draft import ThumbnailDraft
 from app.models.system_log import SystemLog, LogLevel
 from app.core.redis_client import redis_client
 from app.tasks.upload import upload_video_task
+from app.utils.scheduling import calculate_next_schedule_time
 from app.schemas.video import VideoDetectRequest, VideoResponse, VideoMetadataUpdate, VideoThumbnailSelect, ThumbnailDraftResponse, AIEnhancementResponse, VideoMoveRequest
 from app.services.ingestion_service import IngestionService
 
@@ -469,30 +470,7 @@ async def approve_video(
         
         # Scheduling algorithm
         if not video.scheduled_time:
-            # Find maximum scheduled time of approved/queued/uploaded videos in the future
-            stmt_max = select(func.max(Video.scheduled_time)).where(
-                Video.channel_id == video.channel_id,
-                Video.scheduled_time >= datetime.now(),
-                Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED, VideoStatus.UPLOADING, VideoStatus.UPLOADED])
-            )
-            res_max = await db.execute(stmt_max)
-            max_sched = res_max.scalar()
-            
-            pref_time = channel.preferred_time or time(10, 0, 0)
-            
-            if max_sched:
-                # Sequence sequentially 1 day after the latest scheduled video
-                # Ensure the time matches the preferred time
-                scheduled_dt = datetime.combine(max_sched.date(), pref_time) + timedelta(days=1)
-            else:
-                # Check if today's preferred time is in the future
-                today_dt = datetime.combine(date.today(), pref_time)
-                if today_dt > datetime.now():
-                    scheduled_dt = today_dt
-                else:
-                    scheduled_dt = today_dt + timedelta(days=1)
-                    
-            video.scheduled_time = scheduled_dt
+            video.scheduled_time = await calculate_next_schedule_time(db, channel)
             
         # Mark metadata draft as approved
         stmt_meta = select(MetadataDraft).where(MetadataDraft.video_id == id).order_by(MetadataDraft.version_number.desc())
@@ -504,8 +482,15 @@ async def approve_video(
             latest_meta.approved_at = datetime.utcnow()
             db.add(latest_meta)
             
+        now = datetime.now()
+        is_due = video.scheduled_time <= now
+        
         # Transition status
-        video.status = VideoStatus.APPROVED
+        if is_due:
+            video.status = VideoStatus.QUEUED
+        else:
+            video.status = VideoStatus.APPROVED
+            
         db.add(video)
         await db.commit()
         await db.refresh(video)
@@ -522,10 +507,13 @@ async def approve_video(
             details={"scheduled_time": str(video.scheduled_time)}
         )
         
-        # Dispatch task to Celery queue asynchronously
-        upload_video_task.delay(video.id)
-        logger.info("celery_upload_task_dispatched", video_id=video.id)
-        
+        # Dispatch task to Celery queue asynchronously ONLY if due/immediate
+        if is_due:
+            upload_video_task.delay(video.id)
+            logger.info("celery_upload_task_dispatched_immediately", video_id=video.id)
+        else:
+            logger.info("celery_upload_task_postponed_for_schedule", video_id=video.id, scheduled_time=str(video.scheduled_time))
+            
         return video
         
     finally:
@@ -788,26 +776,7 @@ async def bulk_approve_videos(
             
             # Scheduling calculation
             if not video.scheduled_time:
-                stmt_max = select(func.max(Video.scheduled_time)).where(
-                    Video.channel_id == video.channel_id,
-                    Video.scheduled_time >= datetime.now(),
-                    Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED, VideoStatus.UPLOADING, VideoStatus.UPLOADED])
-                )
-                res_max = await db.execute(stmt_max)
-                max_sched = res_max.scalar()
-                
-                pref_time = channel.preferred_time or time(10, 0, 0)
-                
-                if max_sched:
-                    scheduled_dt = datetime.combine(max_sched.date(), pref_time) + timedelta(days=1)
-                else:
-                    today_dt = datetime.combine(date.today(), pref_time)
-                    if today_dt > datetime.now():
-                        scheduled_dt = today_dt
-                    else:
-                        scheduled_dt = today_dt + timedelta(days=1)
-                        
-                video.scheduled_time = scheduled_dt
+                video.scheduled_time = await calculate_next_schedule_time(db, channel)
                 
             # Mark latest metadata approved
             stmt_meta = select(MetadataDraft).where(MetadataDraft.video_id == video_id).order_by(MetadataDraft.version_number.desc())
@@ -819,7 +788,14 @@ async def bulk_approve_videos(
                 latest_meta.approved_at = datetime.utcnow()
                 db.add(latest_meta)
                 
-            video.status = VideoStatus.APPROVED
+            now = datetime.now()
+            is_due = video.scheduled_time <= now
+            
+            if is_due:
+                video.status = VideoStatus.QUEUED
+            else:
+                video.status = VideoStatus.APPROVED
+                
             db.add(video)
             await db.commit()
             
@@ -834,8 +810,9 @@ async def bulk_approve_videos(
                 user_id=current_user.id
             )
             
-            # Dispatch Celery task
-            upload_video_task.delay(video.id)
+            # Dispatch Celery task only if due/immediate
+            if is_due:
+                upload_video_task.delay(video.id)
             results["success"].append(video_id)
             
         except Exception as e:

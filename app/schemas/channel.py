@@ -16,6 +16,8 @@ class ChannelBase(BaseModel):
     preset_social_links: Optional[Dict[str, Any]] = None
     preset_templates: Optional[List[Dict[str, Any]]] = None
     title_pool: Optional[str] = None
+    upload_days_interval: Optional[int] = 1
+    preferred_upload_times: Optional[str] = None
     thumbnail_style_name: Optional[str] = None
     thumbnail_style_prompt: Optional[str] = None
     gcp_project_id: Optional[str] = None
@@ -42,6 +44,8 @@ class ChannelUpdate(BaseModel):
     preset_social_links: Optional[Dict[str, Any]] = None
     preset_templates: Optional[List[Dict[str, Any]]] = None
     title_pool: Optional[str] = None
+    upload_days_interval: Optional[int] = None
+    preferred_upload_times: Optional[str] = None
     thumbnail_style_name: Optional[str] = None
     thumbnail_style_prompt: Optional[str] = None
     gcp_project_id: Optional[str] = None
