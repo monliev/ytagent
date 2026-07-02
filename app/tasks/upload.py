@@ -55,7 +55,7 @@ def upload_video_task(self, video_id: int) -> Optional[str]:
             logger.error("celery_upload_video_not_found", video_id=video_id)
             return None
             
-        if video.status != VideoStatus.APPROVED:
+        if video.status not in [VideoStatus.APPROVED, VideoStatus.QUEUED]:
             logger.warning(
                 "celery_upload_invalid_status", 
                 video_id=video_id, 
