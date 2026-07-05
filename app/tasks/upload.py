@@ -9,6 +9,10 @@ from app.tasks.celery_app import celery_app
 from app.core.database import SessionLocal
 from app.models import Video, VideoStatus, SystemLog, LogLevel
 from app.services.upload_service_sync import UploadServiceSync
+from app.models.channel import Channel
+from app.utils.telegram_api import object_telegram_api
+from app.services.settings_service import get_supervisor_telegram_id_sync
+import asyncio
 
 logger = structlog.get_logger()
 redis_sync_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -107,6 +111,28 @@ def upload_video_task(self, video_id: int) -> Optional[str]:
                     channel_id=video.channel_id,
                     details={"youtube_video_id": youtube_video_id}
                 )
+
+                try:
+                    channel = db.query(Channel).filter(Channel.id == video.channel_id).first()
+                    channel_name = channel.name if channel else "Unknown Channel"
+                    supervisor_id = get_supervisor_telegram_id_sync(db)
+                    
+                    success_msg = (
+                        f"✅ <b>YOUTUBE UPLOAD SUCCESSFUL</b>\n\n"
+                        f"<b>Channel:</b> {channel_name}\n"
+                        f"<b>Title:</b> {video.current_title or video.filename}\n"
+                        f"<b>YouTube Link:</b> https://youtu.be/{youtube_video_id}\n\n"
+                        f"Video has been successfully uploaded and is now live/processing on YouTube!"
+                    )
+                    
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(object_telegram_api.send_message(chat_id=supervisor_id, text=success_msg))
+                    else:
+                        asyncio.run(object_telegram_api.send_message(chat_id=supervisor_id, text=success_msg))
+                except Exception as tg_err:
+                    logger.error("failed_to_send_upload_success_notification", error=str(tg_err))
+
                 return youtube_video_id
                 
             except Exception as e:
@@ -116,6 +142,32 @@ def upload_video_task(self, video_id: int) -> Optional[str]:
                 video.retry_count += 1
                 video.last_error = str(e)
                 
+                # Check for OAuth / Credential errors
+                err_str = str(e).lower()
+                if "oauth" in err_str or "invalid_grant" in err_str or "credential" in err_str:
+                    try:
+                        channel = db.query(Channel).filter(Channel.id == video.channel_id).first()
+                        channel_name = channel.name if channel else "Unknown Channel"
+                        supervisor_id = get_supervisor_telegram_id_sync(db)
+                        
+                        oauth_msg = (
+                            f"🔴 <b>ALERT: CHANNEL OAUTH DISCONNECTED</b>\n\n"
+                            f"Connection to YouTube OAuth for channel <b>{channel_name}</b> failed during upload task!\n"
+                            f"<b>Error:</b> <code>{str(e)}</code>\n\n"
+                            f"Please go to Channel Settings on the dashboard, disconnect and reconnect Google Auth to resolve scheduled upload failures."
+                        )
+                        
+                        sent_lock_key = f"lock:oauth_alert_sent:{video.channel_id}"
+                        if not redis_sync_client.get(sent_lock_key):
+                            redis_sync_client.set(sent_lock_key, "1", ex=3600)  # 1 hour expiry
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                loop.create_task(object_telegram_api.send_message(chat_id=supervisor_id, text=oauth_msg))
+                            else:
+                                asyncio.run(object_telegram_api.send_message(chat_id=supervisor_id, text=oauth_msg))
+                    except Exception as tg_err:
+                        logger.error("failed_to_send_oauth_realtime_notification", error=str(tg_err))
+
                 if self.request.retries < self.max_retries:
                     # Requeue status back to QUEUED for celery retry
                     video.status = VideoStatus.QUEUED
@@ -151,6 +203,28 @@ def upload_video_task(self, video_id: int) -> Optional[str]:
                         channel_id=video.channel_id,
                         details={"error": str(e)}
                     )
+
+                    try:
+                        channel = db.query(Channel).filter(Channel.id == video.channel_id).first()
+                        channel_name = channel.name if channel else "Unknown Channel"
+                        supervisor_id = get_supervisor_telegram_id_sync(db)
+                        
+                        failed_msg = (
+                            f"❌ <b>YOUTUBE UPLOAD FAILED PERMANENTLY</b>\n\n"
+                            f"<b>Channel:</b> {channel_name}\n"
+                            f"<b>Title:</b> {video.current_title or video.filename}\n"
+                            f"<b>Error:</b> <code>{str(e)}</code>\n\n"
+                            f"The video upload failed after maximum retry attempts. Please review the issue on the dashboard."
+                        )
+                        
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            loop.create_task(object_telegram_api.send_message(chat_id=supervisor_id, text=failed_msg))
+                        else:
+                            asyncio.run(object_telegram_api.send_message(chat_id=supervisor_id, text=failed_msg))
+                    except Exception as tg_err:
+                        logger.error("failed_to_send_upload_failure_notification", error=str(tg_err))
+
                     return None
         finally:
             try:

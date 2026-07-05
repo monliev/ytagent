@@ -211,7 +211,29 @@ class UploadServiceSync:
                     # Rotate GCP Project
                     next_proj = self.rotate_gcp_project(db, channel.id, active_project_id)
                     if next_proj:
+                        old_project_id = active_project_id
                         active_project_id = next_proj.project_id
+                        
+                        try:
+                            from app.services.settings_service import get_supervisor_telegram_id_sync
+                            from app.utils.telegram_api import object_telegram_api
+                            import asyncio
+                            
+                            supervisor_id = get_supervisor_telegram_id_sync(db)
+                            warn_msg = (
+                                f"⚠️ <b>GCP PROJECT QUOTA EXCEEDED</b>\n\n"
+                                f"GCP Project <code>{old_project_id}</code> daily quota limit hit during upload!\n"
+                                f"<b>Rotated to next active project:</b> <code>{active_project_id}</code>\n"
+                                f"Channel: <b>{channel.name}</b>"
+                            )
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                loop.create_task(object_telegram_api.send_message(chat_id=supervisor_id, text=warn_msg))
+                            else:
+                                asyncio.run(object_telegram_api.send_message(chat_id=supervisor_id, text=warn_msg))
+                        except Exception as tg_err:
+                            logger.error("failed_to_send_quota_rotation_alert", error=str(tg_err))
+
                         # Retry loop continues with new active project
                         self._log_event_sync(
                             db=db,
@@ -224,6 +246,26 @@ class UploadServiceSync:
                         )
                         continue
                     else:
+                        try:
+                            from app.services.settings_service import get_supervisor_telegram_id_sync
+                            from app.utils.telegram_api import object_telegram_api
+                            import asyncio
+                            
+                            supervisor_id = get_supervisor_telegram_id_sync(db)
+                            err_msg = (
+                                f"🚨 <b>CRITICAL: ALL GCP PROJECTS EXHAUSTED</b>\n\n"
+                                f"All registered GCP projects for channel <b>{channel.name}</b> have reached their daily YouTube quota limit!\n"
+                                f"<b>Active Upload:</b> <i>{video.current_title or video.filename}</i>\n\n"
+                                f"Upload has been suspended. Please add a new active GCP project or wait for daily YouTube quota reset."
+                            )
+                            loop = asyncio.get_event_loop()
+                            if loop.is_running():
+                                loop.create_task(object_telegram_api.send_message(chat_id=supervisor_id, text=err_msg))
+                            else:
+                                asyncio.run(object_telegram_api.send_message(chat_id=supervisor_id, text=err_msg))
+                        except Exception as tg_err:
+                            logger.error("failed_to_send_quota_exhaustion_alert", error=str(tg_err))
+
                         raise RuntimeError(f"All GCP projects for channel '{channel.name}' are exhausted today.") from e
                 else:
                     raise

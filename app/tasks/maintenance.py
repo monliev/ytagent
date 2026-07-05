@@ -204,6 +204,31 @@ def backup_database() -> dict:
         # Try to clean up partial file
         if os.path.exists(backup_file):
             os.remove(backup_file)
+            
+        try:
+            from app.utils.telegram_api import object_telegram_api
+            from app.services.settings_service import get_supervisor_telegram_id_sync
+            import asyncio
+            
+            # Send Telegram alert on backup failure
+            alert_msg = (
+                f"💾 <b>DATABASE BACKUP FAILED</b>\n\n"
+                f"Daily MySQL database backup to OMV folder has failed!\n"
+                f"<b>Error:</b> <code>{str(e)}</code>\n\n"
+                f"Please verify OMV connection mount and storage disk space."
+            )
+            
+            with SessionLocal() as db_session:
+                supervisor_id = get_supervisor_telegram_id_sync(db_session)
+                
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(object_telegram_api.send_message(chat_id=supervisor_id, text=alert_msg))
+            else:
+                asyncio.run(object_telegram_api.send_message(chat_id=supervisor_id, text=alert_msg))
+        except Exception as tg_err:
+            logger.error("failed_to_send_backup_alert_to_telegram", error=str(tg_err))
+            
         return {"status": "error", "error": str(e)}
 
 
@@ -480,6 +505,34 @@ def auto_patrol_queue_integrity() -> dict:
     shifted_videos = []
 
     with SessionLocal() as db:
+        # Check disk space usage of root partition
+        import shutil
+        try:
+            total, used, free = shutil.disk_usage("/")
+            percent_used = (used / total) * 100
+            if percent_used >= 90.0:
+                import redis
+                redis_sync_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
+                sent_lock_key = "lock:low_disk_space_alert_sent"
+                if not redis_sync_client.get(sent_lock_key):
+                    redis_sync_client.set(sent_lock_key, "1", ex=86400) # 24 hours expiry
+                    
+                    supervisor_id = get_supervisor_telegram_id_sync(db)
+                    alert_msg = (
+                        f"⚠️ <b>WARNING: LOW DISK SPACE ON VM HOST</b>\n\n"
+                        f"The root filesystem on VM YTAgent is running out of space!\n"
+                        f"<b>Used Space:</b> <code>{percent_used:.2f}%</code>\n"
+                        f"<b>Available Free Space:</b> <code>{free / (1024*1024*1024):.2f} GB</code>\n\n"
+                        f"Please clean up temporary files or expand VM disk partition to prevent system lockups."
+                    )
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(object_telegram_api.send_message(chat_id=supervisor_id, text=alert_msg))
+                    else:
+                        asyncio.run(object_telegram_api.send_message(chat_id=supervisor_id, text=alert_msg))
+        except Exception as disk_err:
+            logger.error("failed_to_check_disk_space_or_send_alert", error=str(disk_err))
+
         # Fetch all approved and queued videos that have a scheduled time
         videos = (
             db.query(Video)
