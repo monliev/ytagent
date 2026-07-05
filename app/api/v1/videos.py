@@ -596,6 +596,14 @@ async def retry_video(
     video.status = VideoStatus.APPROVED
     video.retry_count = 0
     video.last_error = None
+    
+    # Recalculate scheduled time to avoid collision/stacking
+    from app.utils.scheduling import calculate_next_schedule_time
+    stmt_chan = select(Channel).where(Channel.id == video.channel_id)
+    res_chan = await db.execute(stmt_chan)
+    channel = res_chan.scalar_one()
+    video.scheduled_time = await calculate_next_schedule_time(db, channel)
+    
     db.add(video)
     await db.commit()
     await db.refresh(video)
@@ -611,10 +619,16 @@ async def retry_video(
         user_id=current_user.id
     )
     
-    # Dispatch task to Celery queue asynchronously
-    upload_video_task.delay(video.id)
-    logger.info("celery_upload_task_dispatched_via_retry", video_id=video.id)
-    
+    # Dispatch task to Celery queue only if due/immediate
+    now = datetime.now()
+    is_due = video.scheduled_time <= now if video.scheduled_time else True
+    if is_due:
+        video.status = VideoStatus.QUEUED
+        db.add(video)
+        await db.commit()
+        upload_video_task.delay(video.id)
+        logger.info("celery_upload_task_dispatched_via_retry", video_id=video.id)
+        
     return video
 
 
@@ -917,6 +931,14 @@ async def bulk_retry_videos(
             video.status = VideoStatus.APPROVED
             video.retry_count = 0
             video.last_error = None
+            
+            # Recalculate scheduled time to avoid collision/stacking
+            from app.utils.scheduling import calculate_next_schedule_time
+            stmt_chan = select(Channel).where(Channel.id == video.channel_id)
+            res_chan = await db.execute(stmt_chan)
+            channel = res_chan.scalar_one()
+            video.scheduled_time = await calculate_next_schedule_time(db, channel)
+            
             db.add(video)
             await db.commit()
             
