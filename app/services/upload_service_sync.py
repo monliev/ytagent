@@ -25,8 +25,11 @@ from app.models import (
     LogLevel
 )
 from app.utils.credential_crypto import encrypt_token, decrypt_token
+import redis
+from app.core.config import settings
 
 logger = structlog.get_logger()
+redis_sync_client = redis.Redis.from_url(settings.REDIS_URL, decode_responses=True)
 
 class UploadServiceSync:
     """Service to handle YouTube video upload pipeline in sync worker context.
@@ -294,6 +297,10 @@ class UploadServiceSync:
                 if status:
                     progress = int(status.progress() * 100)
                     logger.info("upload_chunk_success", video_id=video.id, progress=progress)
+                    try:
+                        redis_sync_client.set(f"video:{video.id}:progress", progress, ex=3600)
+                    except Exception as re:
+                        logger.warning("failed_to_save_progress_to_redis", error=str(re))
                 retry_count = 0  # reset on chunk success
             except (HttpError, IOError, Exception) as e:
                 # Handle transient error types

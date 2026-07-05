@@ -154,6 +154,10 @@ def upload_video_task(self, video_id: int) -> Optional[str]:
                     return None
         finally:
             try:
+                redis_sync_client.delete(f"video:{video_id}:progress")
+            except Exception:
+                pass
+            try:
                 lock.release()
                 logger.info("celery_upload_lock_released", video_id=video_id)
             except Exception as le:

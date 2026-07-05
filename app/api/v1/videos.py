@@ -104,7 +104,19 @@ async def list_videos(
     
     query = query.order_by(Video.created_at.desc())
     res = await db.execute(query)
-    return res.scalars().all()
+    videos = list(res.scalars().all())
+    
+    for video in videos:
+        if video.status == VideoStatus.UPLOADING:
+            try:
+                progress_val = await redis_client.get(f"video:{video.id}:progress")
+                video.upload_progress = int(progress_val) if progress_val else 0
+            except Exception:
+                video.upload_progress = 0
+        else:
+            video.upload_progress = 0
+            
+    return videos
 
 @router.get("/staging", response_model=List[VideoResponse])
 async def list_staging_videos(

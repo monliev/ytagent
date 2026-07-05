@@ -41,6 +41,7 @@ class VideoResponse(BaseModel):
     made_for_kids: bool = False
     ai_review_note: Optional[str] = None
     metadata_template_id: Optional[str] = None
+    upload_progress: Optional[int] = 0
     created_at: datetime
     updated_at: datetime
 

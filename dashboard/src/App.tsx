@@ -55,6 +55,7 @@ interface Video {
   category_id: string;
   made_for_kids: boolean;
   ai_review_note: string | null;
+  upload_progress?: number;
   created_at: string;
   updated_at: string;
 }
@@ -2279,9 +2280,9 @@ function App() {
                     <p style={{ fontWeight: 600, fontSize: '0.95rem' }}>{v.current_title || v.filename}</p>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px', marginTop: '12px' }}>
                       <div style={{ flexGrow: 1, height: '8px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                        <div style={{ width: '65%', height: '100%', background: 'var(--primary-gradient)', borderRadius: '4px' }}></div>
+                        <div style={{ width: `${v.upload_progress || 0}%`, height: '100%', background: 'var(--primary-gradient)', borderRadius: '4px' }}></div>
                       </div>
-                      <span style={{ fontSize: '0.85rem', fontWeight: 'bold' }}>65%</span>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 'bold' }}>{v.upload_progress || 0}%</span>
                     </div>
                   </div>
                 ))}
@@ -2371,7 +2372,7 @@ function App() {
                           <td style={{ textTransform: 'capitalize' }}>{video.youtube_privacy}</td>
                           <td>
                             <span className={`status-badge badge-${video.status}`}>
-                              {video.status}
+                              {video.status === 'uploading' ? `uploading (${video.upload_progress || 0}%)` : video.status}
                             </span>
                           </td>
                           <td>{video.retry_count}</td>
