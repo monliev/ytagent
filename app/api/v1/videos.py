@@ -1205,16 +1205,40 @@ async def move_video_to_staging(
     if not video:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Video not found")
         
+    orig_scheduled_time = video.scheduled_time
+    channel_id = video.channel_id
+    
     video.status = VideoStatus.STAGING
     video.scheduled_time = None
     db.add(video)
     
+    # Auto-shift subsequent approved/queued videos up to fill the gap
+    if orig_scheduled_time:
+        stmt_subsequent = (
+            select(Video)
+            .where(
+                Video.channel_id == channel_id,
+                Video.status.in_([VideoStatus.APPROVED, VideoStatus.QUEUED]),
+                Video.scheduled_time > orig_scheduled_time
+            )
+            .order_by(Video.scheduled_time.asc())
+        )
+        res_sub = await db.execute(stmt_subsequent)
+        subsequent_videos = res_sub.scalars().all()
+        
+        next_slot = orig_scheduled_time
+        for sub_video in subsequent_videos:
+            old_time = sub_video.scheduled_time
+            sub_video.scheduled_time = next_slot
+            db.add(sub_video)
+            next_slot = old_time
+            
     # Audit log
     log_entry = SystemLog(
         level=LogLevel.INFO,
         service="video",
         event_type="video_returned_to_staging",
-        message=f"Video ID {id} returned to STAGING from schedule by user ID {current_user.id}",
+        message=f"Video ID {id} returned to STAGING from schedule and subsequent queue shifted up by user ID {current_user.id}",
         video_id=video.id,
         channel_id=video.channel_id,
         user_id=current_user.id
