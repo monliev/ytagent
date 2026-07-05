@@ -76,6 +76,11 @@ celery_app.conf.update(
             "task": "app.tasks.maintenance.auto_patrol_queue_integrity",
             "schedule": 300.0,
         },
+        # Daily at 01:00 WIB: check YouTube OAuth connection health for active channels
+        "check-channels-oauth-health": {
+            "task": "app.tasks.maintenance.check_channels_oauth_health",
+            "schedule": crontab(hour=1, minute=0),
+        },
     },
 )
 

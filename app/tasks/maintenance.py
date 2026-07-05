@@ -249,6 +249,7 @@ def check_copyright_claims() -> dict:
     from app.services.upload_service_sync import UploadServiceSync
     from app.utils.telegram_api import object_telegram_api
     from app.models.channel import Channel
+    from app.services.settings_service import get_supervisor_telegram_id_sync
     import asyncio
     
     upload_service = UploadServiceSync()
@@ -334,15 +335,16 @@ def check_copyright_claims() -> dict:
                             f"Please check YouTube Studio immediately."
                         )
                         try:
+                            supervisor_id = get_supervisor_telegram_id_sync(db)
                             loop = asyncio.get_event_loop()
                             if loop.is_running():
                                 loop.create_task(object_telegram_api.send_message(
-                                    chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                                    chat_id=supervisor_id,
                                     text=alert_msg
                                 ))
                             else:
                                 asyncio.run(object_telegram_api.send_message(
-                                    chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                                    chat_id=supervisor_id,
                                     text=alert_msg
                                 ))
                         except Exception as tg_err:
@@ -366,6 +368,7 @@ def send_daily_hermes_report() -> dict:
     from app.core.config import settings
     from app.utils.telegram_api import object_telegram_api
     from app.models import Channel, Video, VideoStatus, AnalyticsRecord
+    from app.services.settings_service import get_supervisor_telegram_id_sync
     import asyncio
     from sqlalchemy import func
 
@@ -437,15 +440,16 @@ def send_daily_hermes_report() -> dict:
                 )
 
                 # Send via Telegram
+                supervisor_id = get_supervisor_telegram_id_sync(db)
                 loop = asyncio.get_event_loop()
                 if loop.is_running():
                     loop.create_task(object_telegram_api.send_message(
-                        chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                        chat_id=supervisor_id,
                         text=message
                     ))
                 else:
                     asyncio.run(object_telegram_api.send_message(
-                        chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                        chat_id=supervisor_id,
                         text=message
                     ))
 
@@ -469,6 +473,7 @@ def auto_patrol_queue_integrity() -> dict:
     """
     from app.utils.telegram_api import object_telegram_api
     from app.core.config import settings
+    from app.services.settings_service import get_supervisor_telegram_id_sync
     import asyncio
 
     missing_count = 0
@@ -542,15 +547,16 @@ def auto_patrol_queue_integrity() -> dict:
                 )
 
                 try:
+                    supervisor_id = get_supervisor_telegram_id_sync(db)
                     loop = asyncio.get_event_loop()
                     if loop.is_running():
                         loop.create_task(object_telegram_api.send_message(
-                            chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                            chat_id=supervisor_id,
                             text=alert_msg
                         ))
                     else:
                         asyncio.run(object_telegram_api.send_message(
-                            chat_id=settings.SUPERVISOR_TELEGRAM_ID,
+                            chat_id=supervisor_id,
                             text=alert_msg
                         ))
                 except Exception as tg_err:
@@ -562,3 +568,79 @@ def auto_patrol_queue_integrity() -> dict:
         "shifted_videos_count": len(shifted_videos),
         "shifted_videos": shifted_videos
     }
+
+
+@celery_app.task(name="app.tasks.maintenance.check_channels_oauth_health")
+def check_channels_oauth_health() -> dict:
+    """
+    Check the health of Google OAuth tokens for all active channels.
+    Runs daily or periodically to verify credentials and alert the supervisor if any are disconnected.
+    """
+    from app.services.upload_service_sync import UploadServiceSync
+    from app.utils.telegram_api import object_telegram_api
+    from app.models.channel import Channel
+    from app.models.channel_credentials import ChannelCredentials
+    from app.services.settings_service import get_supervisor_telegram_id_sync
+    import asyncio
+
+    results = {"success": [], "failed": []}
+
+    with SessionLocal() as db:
+        channels = db.query(Channel).filter(Channel.is_active == True).all()
+        if not channels:
+            return {"status": "complete", "checked": 0}
+
+        uploader = UploadServiceSync()
+        supervisor_id = get_supervisor_telegram_id_sync(db)
+
+        for channel in channels:
+            # Find active credential record for this channel
+            creds_rec = db.query(ChannelCredentials).filter(
+                ChannelCredentials.channel_id == channel.id,
+                ChannelCredentials.is_active == True
+            ).first()
+
+            if not creds_rec:
+                results["failed"].append({
+                    "channel": channel.name,
+                    "reason": "No active credentials record configured in database."
+                })
+                continue
+
+            try:
+                # Try to build client (which will try to refresh OAuth token if needed)
+                youtube = uploader.get_youtube_client(db, channel.id, creds_rec.gcp_project_id)
+                
+                # Make a lightweight, zero-quota API call to verify the client actually works
+                youtube.channels().list(part="id", mine=True).execute()
+                
+                results["success"].append(channel.name)
+            except Exception as e:
+                results["failed"].append({
+                    "channel": channel.name,
+                    "reason": str(e)
+                })
+                
+                alert_msg = (
+                    f"🔴 <b>ALERT: CHANNEL OAUTH DISCONNECTED</b>\n\n"
+                    f"Connection to YouTube OAuth for channel <b>{channel.name}</b> has been lost!\n"
+                    f"<b>Error:</b> <code>{str(e)}</code>\n\n"
+                    f"Please go to Channel Settings on the dashboard, disconnect and reconnect Google Auth to prevent scheduled upload failures."
+                )
+                
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(object_telegram_api.send_message(
+                            chat_id=supervisor_id,
+                            text=alert_msg
+                        ))
+                    else:
+                        asyncio.run(object_telegram_api.send_message(
+                            chat_id=supervisor_id,
+                            text=alert_msg
+                        ))
+                except Exception as tg_err:
+                    logger.error("failed_to_send_oauth_health_alert", channel_id=channel.id, error=str(tg_err))
+
+    return {"status": "complete", "results": results}
