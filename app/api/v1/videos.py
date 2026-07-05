@@ -871,6 +871,74 @@ async def bulk_discard_videos(
     return results
 
 
+@router.post("/bulk-retry", status_code=status.HTTP_200_OK)
+async def bulk_retry_videos(
+    payload: BulkVideoAction,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Bulk retry failed or errored videos."""
+    logger.info("api_bulk_retry_videos_called", count=len(payload.video_ids), user_id=current_user.id)
+    
+    results = {"success": [], "failed": []}
+    
+    for video_id in payload.video_ids:
+        lock_key = f"lock:video:approve:{video_id}"
+        acquired = await redis_client.set(lock_key, "1", ex=10, nx=True)
+        if not acquired:
+            results["failed"].append({"id": video_id, "detail": "Resource locked, try again"})
+            continue
+            
+        try:
+            stmt = select(Video).where(Video.id == video_id)
+            res = await db.execute(stmt)
+            video = res.scalar_one_or_none()
+            
+            if not video:
+                results["failed"].append({"id": video_id, "detail": "Video not found"})
+                continue
+                
+            if video.status not in [VideoStatus.FAILED, VideoStatus.ERROR]:
+                results["failed"].append({"id": video_id, "detail": f"Invalid status: {video.status}"})
+                continue
+                
+            video.status = VideoStatus.APPROVED
+            video.retry_count = 0
+            video.last_error = None
+            db.add(video)
+            await db.commit()
+            
+            await _log_video_event(
+                db=db,
+                level=LogLevel.INFO,
+                service="approval",
+                event_type="video_retry_initiated_bulk",
+                message=f"Video retry initiated via bulk action by user ID {current_user.id}",
+                video_id=video.id,
+                channel_id=video.channel_id,
+                user_id=current_user.id
+            )
+            
+            # Dispatch Celery task immediately if scheduled time is in the past
+            now = datetime.now()
+            is_due = video.scheduled_time <= now if video.scheduled_time else True
+            if is_due:
+                video.status = VideoStatus.QUEUED
+                db.add(video)
+                await db.commit()
+                upload_video_task.delay(video.id)
+                
+            results["success"].append(video_id)
+            
+        except Exception as e:
+            results["failed"].append({"id": video_id, "detail": str(e)})
+            logger.error("bulk_retry_video_error", video_id=video_id, error=str(e))
+        finally:
+            await redis_client.delete(lock_key)
+            
+    return results
+
+
 @router.post("/{id}/move", response_model=VideoResponse)
 async def move_video_in_queue(
     id: int,

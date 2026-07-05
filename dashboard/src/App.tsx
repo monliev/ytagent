@@ -323,6 +323,7 @@ function App() {
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [patrollingQueue, setPatrollingQueue] = useState(false);
+  const [retryingErrors, setRetryingErrors] = useState(false);
 
   const triggerToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
@@ -1275,6 +1276,35 @@ function App() {
     }
   };
 
+  const handleBulkRetryErrors = async () => {
+    const errorVideos = videos.filter(v => ['failed', 'error'].includes(v.status));
+    if (errorVideos.length === 0) return;
+    
+    if (!confirm(`Are you sure you want to retry all ${errorVideos.length} failed/errored video uploads?`)) return;
+    
+    setRetryingErrors(true);
+    try {
+      const res = await fetch(`${API_URL}/videos/bulk-retry`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({ video_ids: errorVideos.map(v => v.id) })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        const successCount = data.success?.length || 0;
+        const failedCount = data.failed?.length || 0;
+        triggerToast(`Bulk retry complete: ${successCount} successful, ${failedCount} failed.`, 'success');
+        refreshAllData();
+      } else {
+        triggerToast(data.detail || 'Failed to trigger bulk retry.', 'error');
+      }
+    } catch (err) {
+      triggerToast('Error connecting to bulk retry API.', 'error');
+    } finally {
+      setRetryingErrors(false);
+    }
+  };
+
 
   const handleApproveVideo = async (videoId: number) => {
     try {
@@ -2218,14 +2248,26 @@ function App() {
                 <h1>Background Queue Manager</h1>
                 <p>Track Celery worker sequential upload execution progress and error history</p>
               </div>
-              <button 
-                className="btn btn-secondary" 
-                onClick={triggerQueueIntegrityPatrol}
-                disabled={patrollingQueue}
-                style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}
-              >
-                {patrollingQueue ? '🔍 Patrolling...' : '🔍 Scan Queue Integrity'}
-              </button>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                {videos.some(v => ['failed', 'error'].includes(v.status)) && (
+                  <button 
+                    className="btn" 
+                    onClick={handleBulkRetryErrors}
+                    disabled={retryingErrors}
+                    style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem', background: 'linear-gradient(135deg, #f59e0b, #d97706)', border: 'none', color: '#fff', fontWeight: 600, cursor: 'pointer' }}
+                  >
+                    {retryingErrors ? '🔄 Retrying...' : '🔄 Retry All Errors'}
+                  </button>
+                )}
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={triggerQueueIntegrityPatrol}
+                  disabled={patrollingQueue}
+                  style={{ padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.85rem' }}
+                >
+                  {patrollingQueue ? '🔍 Patrolling...' : '🔍 Scan Queue Integrity'}
+                </button>
+              </div>
             </div>
 
             {/* Active upload progress bar mockup */}
