@@ -185,6 +185,16 @@ const formatRecentActivityLog = (log: any) => {
 function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+
+  // ── Dark / Light theme toggle ──
+  const [theme, setTheme] = useState<'light' | 'dark'>(
+    () => (localStorage.getItem('theme') as 'light' | 'dark') || 'dark'
+  );
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
   
   // Navigation tabs: dashboard, staging, queue, schedule, analytics, channels, logs, settings
   const [currentTab, setCurrentTab] = useState<'dashboard' | 'staging' | 'queue' | 'schedule' | 'analytics' | 'channels' | 'logs' | 'settings'>('dashboard');
@@ -1808,7 +1818,7 @@ function App() {
       {/* Sidebar Navigation */}
       <aside className="sidebar">
         <div className="logo-container">
-          <div className="logo-icon">📺</div>
+          <div className="logo-icon">YT</div>
           <span className="logo-text">YTAgent</span>
         </div>
 
@@ -1829,8 +1839,8 @@ function App() {
           {isChannelSelectorOpen && (
             <div style={{
               position: 'absolute', top: '105%', left: 0, right: 0,
-              backgroundColor: '#1e293b', border: '1px solid var(--border-color)',
-              borderRadius: '8px', zIndex: 10, display: 'flex', flexDirection: 'column',
+              backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-sm)', zIndex: 10, display: 'flex', flexDirection: 'column',
               boxShadow: 'var(--shadow-lg)', overflow: 'hidden'
             }}>
               <div 
@@ -1923,8 +1933,11 @@ function App() {
               <span className="user-role">{currentUser?.role || 'user'}</span>
             </div>
           </div>
+          <button className="btn-theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}>
+            {theme === 'dark' ? '☀️' : '🌙'}
+          </button>
           <button className="btn-logout" onClick={handleLogout} title="Log out">
-            ❌
+            ✕
           </button>
         </div>
       </aside>
