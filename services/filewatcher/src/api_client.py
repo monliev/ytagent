@@ -28,7 +28,24 @@ class APIClient:
                 return True
             else:
                 logger.error(f"API rejected file detection. Status: {response.status_code}, Body: {response.text}")
-                return False
         except Exception as e:
             logger.error(f"Failed to communicate with API server at {url}: {e}")
             return False
+
+    def wait_for_api_ready(self, timeout_seconds: int = 120) -> bool:
+        """Ping /health until it returns 200 or timeout is reached."""
+        import time
+        url = f"{self.base_url}/health"
+        start_time = time.time()
+        logger.info(f"Waiting for API backend to become ready at {url}...")
+        while time.time() - start_time < timeout_seconds:
+            try:
+                response = self.client.get(url)
+                if response.status_code == 200:
+                    logger.info("API backend is ready!")
+                    return True
+            except Exception:
+                pass
+            time.sleep(2)
+        logger.error(f"API backend did not become ready within {timeout_seconds} seconds.")
+        return False

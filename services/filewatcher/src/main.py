@@ -170,6 +170,12 @@ def main():
         logger.warning(f"Mount path '{mount_path}' not found. Creating for local testing...")
         os.makedirs(mount_path, exist_ok=True)
 
+    # --- Wait for API to be ready ---
+    from services.filewatcher.src.api_client import APIClient
+    api_client = APIClient()
+    if not api_client.wait_for_api_ready(timeout_seconds=120):
+        logger.error("API backend is not reachable. Proceeding, but scans may fail.")
+
     # --- Run initial scan to process files already present at startup ---
     logger.info("Running initial startup scan...")
     try:
