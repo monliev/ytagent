@@ -143,8 +143,11 @@ services:
     container_name: ytagent-filewatcher
     environment:
       - API_URL=http://api:8000
-      - SCAN_INTERVAL=120
       - OMV_MOUNT_PATH=${OMV_MOUNT_PATH}
+      - STABLE_TIMEOUT=5
+      # POLL_INTERVAL: fallback periodic scan in seconds (safety net for missed inotify events)
+      # Primary detection is event-driven via inotifywait (near-zero I/O while idle)
+      - POLL_INTERVAL=300
     volumes:
       - ${OMV_MOUNT_PATH}:${OMV_MOUNT_PATH}:ro
     depends_on:
