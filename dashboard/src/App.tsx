@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
-// Base API URL
 const API_URL = import.meta.env.VITE_API_URL || 
   (typeof window !== 'undefined' && window.location.port === '5173' 
     ? 'http://localhost:8000/api/v1' 
@@ -17,7 +16,6 @@ const getRedirectUri = () => {
   return `${window.location.origin}/api/v1/channels/oauth-callback`;
 };
 
-// Types Definitions
 interface User {
   id: number;
   telegram_id: number;
@@ -186,7 +184,7 @@ function App() {
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-  // ── Dark / Light theme toggle ──
+  // Theme toggle
   const [theme, setTheme] = useState<'light' | 'dark'>(
     () => (localStorage.getItem('theme') as 'light' | 'dark') || 'dark'
   );
@@ -195,10 +193,27 @@ function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
-  
-  // Navigation tabs: dashboard, staging, queue, schedule, analytics, channels, logs, settings
+
+  // Navigation and UI state
   const [currentTab, setCurrentTab] = useState<'dashboard' | 'staging' | 'queue' | 'schedule' | 'analytics' | 'channels' | 'logs' | 'settings'>('dashboard');
-  
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
+
+  // Close modals and drawers on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsEditModalOpen(false);
+        setIsChannelModalOpen(false);
+        setPreviewImageUrl(null);
+        setIsMobileMenuOpen(false);
+        setIsChannelSelectorOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Channel Switcher (Context selector)
   const [selectedChannelId, setSelectedChannelId] = useState<number | 'all'>('all');
   const [isChannelSelectorOpen, setIsChannelSelectorOpen] = useState(false);
@@ -367,6 +382,7 @@ function App() {
   const refreshAllData = async () => {
     if (!token) return;
     setLoading(true);
+    setDashboardError(null);
     try {
       // 1. Fetch Channels
       const chanRes = await fetch(`${API_URL}/channels/`, { headers: getHeaders() });
@@ -413,6 +429,7 @@ function App() {
       triggerToast('Dashboard data refreshed successfully.', 'success');
     } catch (e) {
       console.error(e);
+      setDashboardError('Failed to load dashboard data. Please verify your connection to the API server.');
       triggerToast('Network error refreshing dashboard data.', 'error');
     } finally {
       setLoading(false);
@@ -425,7 +442,7 @@ function App() {
     }
   }, [token]);
 
-  // Fetch public settings (reCAPTCHA site key) on mount — use explicit render
+  // Fetch public settings (reCAPTCHA site key) on mount: use explicit render
   useEffect(() => {
     const fetchPublicSettings = async () => {
       try {
@@ -1723,6 +1740,20 @@ function App() {
     return match ? match.name : 'Unknown Channel';
   };
 
+  const getTabTitle = (tab: typeof currentTab) => {
+    switch (tab) {
+      case 'dashboard': return 'Overview';
+      case 'staging': return 'Staging Area';
+      case 'queue': return 'Queue Manager';
+      case 'schedule': return 'Broadcast Schedule';
+      case 'analytics': return 'Performance Analytics';
+      case 'channels': return 'Channel Settings';
+      case 'logs': return 'System Logs';
+      case 'settings': return 'Global Settings';
+      default: return 'Overview';
+    }
+  };
+
   // Computed metrics from real data
   const stagingVideos = videos.filter(v => v.status === 'staging');
   const queuedVideos = videos.filter(v => ['approved', 'queued', 'uploading'].includes(v.status));
@@ -1815,134 +1846,299 @@ function App() {
 
   return (
     <div className="app-container">
-      {/* Sidebar Navigation */}
-      <aside className="sidebar">
-        <div className="logo-container">
-          <div className="logo-icon">YT</div>
-          <span className="logo-text">YTAgent</span>
-        </div>
-
-        {/* Channel Context Switcher Dropdown */}
-        <div style={{ position: 'relative', marginBottom: '24px' }}>
-          <button 
-            id="channel-selector-btn"
-            className="btn btn-secondary" 
-            style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px' }}
-            onClick={() => setIsChannelSelectorOpen(!isChannelSelectorOpen)}
+      {/* ─── 1. Apple Global Nav (44px Persistent Top Bar) ─── */}
+      <header className="apple-global-nav">
+        <div className="apple-global-nav-content">
+          <button
+            type="button"
+            className="apple-nav-brand"
+            onClick={() => { setCurrentTab('dashboard'); setIsMobileMenuOpen(false); }}
+            aria-label="YTAgent Overview"
           >
-            <span style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>📻</span> {getSelectedChannelName()}
-            </span>
-            <span>▼</span>
+            <span className="apple-nav-logo-glyph"></span>
+            <span className="apple-nav-logo-text">YTAgent</span>
           </button>
-          
-          {isChannelSelectorOpen && (
-            <div style={{
-              position: 'absolute', top: '105%', left: 0, right: 0,
-              backgroundColor: 'var(--bg-card)', border: '1px solid var(--border-color)',
-              borderRadius: 'var(--radius-sm)', zIndex: 10, display: 'flex', flexDirection: 'column',
-              boxShadow: 'var(--shadow-lg)', overflow: 'hidden'
-            }}>
-              <div 
-                style={{ padding: '10px 14px', cursor: 'pointer' }}
-                onClick={() => { setSelectedChannelId('all'); setIsChannelSelectorOpen(false); }}
-                className="channel-dropdown-item"
-              >
-                🌐 All Channels
+
+          {/* Desktop Global Navigation Links */}
+          <nav className="apple-nav-links" aria-label="Global Navigation">
+            <button
+              type="button"
+              id="nav-dashboard"
+              className={`apple-nav-link ${currentTab === 'dashboard' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('dashboard')}
+            >
+              Overview
+            </button>
+            <button
+              type="button"
+              id="nav-staging"
+              className={`apple-nav-link ${currentTab === 'staging' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('staging')}
+            >
+              Staging
+              {stagingVideos.length > 0 && (
+                <span className="apple-nav-badge apple-badge-warning">{stagingVideos.length}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              id="nav-queue"
+              className={`apple-nav-link ${currentTab === 'queue' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('queue')}
+            >
+              Queue
+              {queuedVideos.length > 0 && (
+                <span className="apple-nav-badge apple-badge-primary">{queuedVideos.length}</span>
+              )}
+            </button>
+            <button
+              type="button"
+              id="nav-schedule"
+              className={`apple-nav-link ${currentTab === 'schedule' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('schedule')}
+            >
+              Schedule
+            </button>
+            <button
+              type="button"
+              id="nav-analytics"
+              className={`apple-nav-link ${currentTab === 'analytics' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('analytics')}
+            >
+              Analytics
+            </button>
+            <button
+              type="button"
+              id="nav-channels"
+              className={`apple-nav-link ${currentTab === 'channels' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('channels')}
+            >
+              Channels
+            </button>
+            <button
+              type="button"
+              id="nav-logs"
+              className={`apple-nav-link ${currentTab === 'logs' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('logs')}
+            >
+              Logs
+            </button>
+            <button
+              type="button"
+              id="nav-settings"
+              className={`apple-nav-link ${currentTab === 'settings' ? 'active' : ''}`}
+              onClick={() => setCurrentTab('settings')}
+            >
+              Settings
+            </button>
+          </nav>
+
+          {/* Right Utility Cluster */}
+          <div className="apple-nav-utilities">
+            <button
+              type="button"
+              className="apple-icon-btn"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+              title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
+
+            <div className="apple-user-capsule" title={currentUser?.full_name || 'User'}>
+              <div className="apple-avatar">
+                {currentUser?.full_name?.charAt(0) || 'U'}
               </div>
-              {channels.map(c => (
-                <div 
-                  key={c.id}
-                  style={{ padding: '10px 14px', cursor: 'pointer' }}
-                  onClick={() => { setSelectedChannelId(c.id); setIsChannelSelectorOpen(false); }}
-                  className="channel-dropdown-item"
-                >
-                  🎵 {c.name}
+              <button
+                type="button"
+                className="apple-logout-btn"
+                onClick={handleLogout}
+                aria-label="Log out of application"
+                title="Log out"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Mobile Hamburger Toggle (<= 834px) */}
+            <button
+              type="button"
+              className="apple-mobile-menu-btn"
+              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+              aria-label={isMobileMenuOpen ? "Close navigation menu" : "Open navigation menu"}
+              aria-expanded={isMobileMenuOpen}
+            >
+              {isMobileMenuOpen ? '✕' : '☰'}
+            </button>
+          </div>
+        </div>
+      </header>
+
+      {/* ─── 2. Apple Frosted Sub-Nav (52px Sticky Bar) ─── */}
+      <div className="apple-sub-nav">
+        <div className="apple-sub-nav-content">
+          <div className="apple-sub-nav-headline">
+            <span className="apple-sub-nav-title">{getTabTitle(currentTab)}</span>
+          </div>
+
+          <div className="apple-sub-nav-actions">
+            {/* Channel Context Switcher Pill */}
+            <div className="apple-channel-picker-wrap">
+              <button
+                id="channel-selector-btn"
+                className="apple-chip-pill"
+                onClick={() => setIsChannelSelectorOpen(!isChannelSelectorOpen)}
+                aria-expanded={isChannelSelectorOpen}
+                aria-haspopup="listbox"
+              >
+                <span className="apple-chip-dot">●</span>
+                <span className="apple-chip-label">{getSelectedChannelName()}</span>
+                <span className="apple-chip-arrow">▾</span>
+              </button>
+
+              {isChannelSelectorOpen && (
+                <div className="apple-dropdown-menu">
+                  <button
+                    type="button"
+                    onClick={() => { setSelectedChannelId('all'); setIsChannelSelectorOpen(false); }}
+                    className={`apple-dropdown-item ${selectedChannelId === 'all' ? 'active' : ''}`}
+                  >
+                    🌐 All Channels
+                  </button>
+                  {channels.map(c => (
+                    <button
+                      type="button"
+                      key={c.id}
+                      onClick={() => { setSelectedChannelId(c.id); setIsChannelSelectorOpen(false); }}
+                      className={`apple-dropdown-item ${selectedChannelId === c.id ? 'active' : ''}`}
+                    >
+                      🎵 {c.name}
+                    </button>
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
-          )}
-        </div>
-        
-        <nav className="sidebar-nav">
-          <div 
-            id="nav-dashboard"
-            className={`nav-item ${currentTab === 'dashboard' ? 'active' : ''}`}
-            onClick={() => setCurrentTab('dashboard')}
-          >
-            <span>📊</span> Dashboard
-          </div>
-          <div 
-            id="nav-staging"
-            className={`nav-item ${currentTab === 'staging' ? 'active' : ''}`}
-            onClick={() => setCurrentTab('staging')}
-          >
-            <span>🎬</span> Staging Area {stagingVideos.length > 0 && <span style={{ marginLeft: 'auto', backgroundColor: 'var(--warning)', color: 'black', padding: '2px 6px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 'bold' }}>{stagingVideos.length}</span>}
-          </div>
-          <div 
-            id="nav-queue"
-            className={`nav-item ${currentTab === 'queue' ? 'active' : ''}`}
-            onClick={() => setCurrentTab('queue')}
-          >
-            <span>📁</span> Queue Manager {queuedVideos.length > 0 && <span style={{ marginLeft: 'auto', backgroundColor: 'var(--primary)', color: 'white', padding: '2px 6px', borderRadius: '10px', fontSize: '0.7rem', fontWeight: 'bold' }}>{queuedVideos.length}</span>}
-          </div>
-          <div 
-            id="nav-schedule"
-            className={`nav-item ${currentTab === 'schedule' ? 'active' : ''}`}
-            onClick={() => setCurrentTab('schedule')}
-          >
-            <span>📅</span> Schedule
-          </div>
-          <div 
-            id="nav-analytics"
-            className={`nav-item ${currentTab === 'analytics' ? 'active' : ''}`}
-            onClick={() => setCurrentTab('analytics')}
-          >
-            <span>📈</span> Analytics
-          </div>
-          <div 
-            id="nav-channels"
-            className={`nav-item ${currentTab === 'channels' ? 'active' : ''}`}
-            onClick={() => setCurrentTab('channels')}
-          >
-            <span>⚙️</span> Channel Settings
-          </div>
-          <div 
-            id="nav-logs"
-            className={`nav-item ${currentTab === 'logs' ? 'active' : ''}`}
-            onClick={() => setCurrentTab('logs')}
-          >
-            <span>📋</span> System Logs
-          </div>
-          <div 
-            id="nav-settings"
-            className={`nav-item ${currentTab === 'settings' ? 'active' : ''}`}
-            onClick={() => setCurrentTab('settings')}
-          >
-            <span>🔧</span> Global Settings
-          </div>
-        </nav>
 
-        <div className="sidebar-footer">
-          <div className="user-profile">
-            <div className="avatar">
-              {currentUser?.full_name?.charAt(0) || 'U'}
+            <button
+              type="button"
+              className="btn btn-secondary btn-pill"
+              onClick={refreshAllData}
+              title="Refresh All Data"
+            >
+              🔄 Refresh
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Mobile Drawer Overlay & Tray (<= 834px) ─── */}
+      {isMobileMenuOpen && (
+        <div className="apple-mobile-drawer">
+          <div className="apple-mobile-drawer-content">
+            <div className="apple-mobile-drawer-header">
+              <span className="apple-mobile-drawer-title">Navigation</span>
+              <button
+                type="button"
+                className="apple-mobile-close-btn"
+                onClick={() => setIsMobileMenuOpen(false)}
+                aria-label="Close menu"
+              >
+                ✕
+              </button>
             </div>
-            <div className="user-info">
-              <span className="username">{currentUser?.full_name || 'Loading...'}</span>
-              <span className="user-role">{currentUser?.role || 'user'}</span>
+            <nav className="apple-mobile-nav-list">
+              <button
+                type="button"
+                className={`apple-mobile-nav-item ${currentTab === 'dashboard' ? 'active' : ''}`}
+                onClick={() => { setCurrentTab('dashboard'); setIsMobileMenuOpen(false); }}
+              >
+                <span>📊 Overview</span>
+              </button>
+              <button
+                type="button"
+                className={`apple-mobile-nav-item ${currentTab === 'staging' ? 'active' : ''}`}
+                onClick={() => { setCurrentTab('staging'); setIsMobileMenuOpen(false); }}
+              >
+                <span>🎬 Staging Area</span>
+                {stagingVideos.length > 0 && <span className="apple-nav-badge apple-badge-warning">{stagingVideos.length}</span>}
+              </button>
+              <button
+                type="button"
+                className={`apple-mobile-nav-item ${currentTab === 'queue' ? 'active' : ''}`}
+                onClick={() => { setCurrentTab('queue'); setIsMobileMenuOpen(false); }}
+              >
+                <span>📁 Queue Manager</span>
+                {queuedVideos.length > 0 && <span className="apple-nav-badge apple-badge-primary">{queuedVideos.length}</span>}
+              </button>
+              <button
+                type="button"
+                className={`apple-mobile-nav-item ${currentTab === 'schedule' ? 'active' : ''}`}
+                onClick={() => { setCurrentTab('schedule'); setIsMobileMenuOpen(false); }}
+              >
+                <span>📅 Broadcast Schedule</span>
+              </button>
+              <button
+                type="button"
+                className={`apple-mobile-nav-item ${currentTab === 'analytics' ? 'active' : ''}`}
+                onClick={() => { setCurrentTab('analytics'); setIsMobileMenuOpen(false); }}
+              >
+                <span>📈 Performance Analytics</span>
+              </button>
+              <button
+                type="button"
+                className={`apple-mobile-nav-item ${currentTab === 'channels' ? 'active' : ''}`}
+                onClick={() => { setCurrentTab('channels'); setIsMobileMenuOpen(false); }}
+              >
+                <span>⚙️ Channel Settings</span>
+              </button>
+              <button
+                type="button"
+                className={`apple-mobile-nav-item ${currentTab === 'logs' ? 'active' : ''}`}
+                onClick={() => { setCurrentTab('logs'); setIsMobileMenuOpen(false); }}
+              >
+                <span>📋 System Logs</span>
+              </button>
+              <button
+                type="button"
+                className={`apple-mobile-nav-item ${currentTab === 'settings' ? 'active' : ''}`}
+                onClick={() => { setCurrentTab('settings'); setIsMobileMenuOpen(false); }}
+              >
+                <span>🔧 Global Settings</span>
+              </button>
+            </nav>
+
+            <div className="apple-mobile-drawer-footer">
+              <div className="apple-mobile-user-row">
+                <div className="apple-avatar">
+                  {currentUser?.full_name?.charAt(0) || 'U'}
+                </div>
+                <div className="apple-mobile-user-meta">
+                  <span className="apple-mobile-user-name">{currentUser?.full_name || 'User'}</span>
+                  <span className="apple-mobile-user-role">{currentUser?.role || 'user'}</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-pill"
+                onClick={() => { toggleTheme(); }}
+                style={{ width: '100%', marginBottom: '8px' }}
+              >
+                {theme === 'dark' ? '☀️ Switch to Light Mode' : '🌙 Switch to Dark Mode'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger btn-pill"
+                onClick={handleLogout}
+                style={{ width: '100%' }}
+              >
+                Log Out
+              </button>
             </div>
           </div>
-          <button className="btn-theme-toggle" onClick={toggleTheme} title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}>
-            {theme === 'dark' ? '☀️' : '🌙'}
-          </button>
-          <button className="btn-logout" onClick={handleLogout} title="Log out">
-            ✕
-          </button>
         </div>
-      </aside>
+      )}
 
-      {/* Main Content Area */}
+      {/* ─── 3. Main Content Canvas (Museum Gallery & Utility Cards) ─── */}
       <main className="main-content">
         
         {/* Tab 1: Global Dashboard */}
@@ -1953,43 +2149,68 @@ function App() {
                 <h1>Overview Dashboard</h1>
                 <p>Real-time analytics and active processing queues overview</p>
               </div>
-              <button className="btn btn-secondary" onClick={refreshAllData}>
+              <button type="button" className="btn btn-secondary" onClick={refreshAllData}>
                 🔄 Refresh
               </button>
             </div>
 
+            {/* Error State Banner */}
+            {dashboardError && (
+              <div className="error-state">
+                <div className="error-state-icon">⚠️</div>
+                <h3>Failed to load dashboard data</h3>
+                <p>{dashboardError}</p>
+                <button type="button" className="btn btn-secondary" onClick={refreshAllData}>
+                  🔄 Try Again
+                </button>
+              </div>
+            )}
+
             {/* Metrics Row */}
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '32px' }}>
+            <div className="metrics-grid">
               <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Active Channels</span>
                 <span style={{ fontSize: '2.2rem', fontWeight: 800 }}>{channels.length}</span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>● All instances healthy</span>
+                {(() => {
+                  const activeCount = channels.filter(c => c.is_active).length;
+                  return (
+                    <span style={{ fontSize: '0.75rem', color: activeCount > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                      ● {channels.length === 0 ? 'No channels configured' : `${activeCount} of ${channels.length} active`}
+                    </span>
+                  );
+                })()}
               </div>
-              <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <div className={`card ${stagingVideos.length > 0 ? 'card-metric-actionable' : ''}`} style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Staging Queue</span>
                 <span style={{ fontSize: '2.2rem', fontWeight: 800, color: stagingVideos.length > 0 ? 'var(--warning)' : 'inherit' }}>
                   {stagingVideos.length}
                 </span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Awaiting approval</span>
+                <span style={{ fontSize: '0.75rem', color: stagingVideos.length > 0 ? 'var(--warning)' : 'var(--text-muted)' }}>
+                  {stagingVideos.length > 0 ? 'Awaiting approval' : 'Queue clear'}
+                </span>
               </div>
               <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Scheduled / Active Queue</span>
                 <span style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--primary)' }}>{queuedVideos.length}</span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Background tasks active</span>
+                <span style={{ fontSize: '0.75rem', color: queuedVideos.length > 0 ? 'var(--primary)' : 'var(--text-muted)' }}>
+                  {queuedVideos.length > 0 ? `${queuedVideos.length} scheduled for upload` : 'No pending tasks'}
+                </span>
               </div>
               <div className="card" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Total Completed Uploads</span>
                 <span style={{ fontSize: '2.2rem', fontWeight: 800, color: 'var(--success)' }}>{completedVideos.length}</span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--success)' }}>✓ Pipeline active</span>
+                <span style={{ fontSize: '0.75rem', color: completedVideos.length > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+                  {completedVideos.length > 0 ? `${completedVideos.length} published to YouTube` : 'No uploads recorded'}
+                </span>
               </div>
             </div>
 
             {/* Content Splitting Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
+            <div className="dashboard-columns">
               {/* Left Column: Channels Grid Summary */}
               <div>
                 <h2 style={{ fontSize: '1.25rem', marginBottom: '16px', fontWeight: 700 }}>Active Channels Overview</h2>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                <div className="channel-cards-grid">
                   {channels.map(chan => {
                     const chanVideos = videos.filter(v => v.channel_id === chan.id);
                     const chanStaging = chanVideos.filter(v => v.status === 'staging').length;
@@ -2046,8 +2267,7 @@ function App() {
                               alignItems: 'center',
                               justifyContent: 'center',
                               fontSize: '1.1rem',
-                              flexShrink: 0,
-                              boxShadow: `0 0 6px ${details.bg}`
+                              flexShrink: 0
                             }}
                           >
                             {details.emoji}
@@ -2801,7 +3021,7 @@ function App() {
 
             {!selectedAnalyticsChannelId ? (
               <div style={{ padding: '80px 20px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)' }}>
-                Please select a channel in the sidebar dropdown to view analytics.
+                Please select a channel in the header dropdown to view analytics.
               </div>
             ) : loadingAnalytics ? (
               <div className="spinner-container" style={{ padding: '80px 20px' }}>
@@ -3883,7 +4103,7 @@ function App() {
                   </div>
                 ) : (
                   <div style={{ padding: '40px 20px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)' }}>
-                    Please select a channel in the sidebar dropdown to manage credentials and GCP projects.
+                    Please select a channel in the header dropdown to manage credentials and GCP projects.
                   </div>
                 )}
               </div>
@@ -3906,8 +4126,8 @@ function App() {
         <div className="modal-overlay" id="edit-video-modal">
           <div className="modal-content">
             <div className="modal-header">
-              <h2>Review Draft details — ID {selectedVideo.id}</h2>
-              <button type="button" className="modal-close" onClick={() => setIsEditModalOpen(false)}>×</button>
+              <h2>Review Draft details: ID {selectedVideo.id}</h2>
+              <button type="button" className="modal-close" onClick={() => setIsEditModalOpen(false)} aria-label="Close review dialog">×</button>
             </div>
 
             <div className="modal-body">
@@ -4311,7 +4531,7 @@ function App() {
           <form className="modal-content" onSubmit={handleSaveChannel}>
             <div className="modal-header">
               <h2>{editingChannel ? 'Modify Channel configuration' : 'Register New Channel'}</h2>
-              <button type="button" className="modal-close" onClick={() => setIsChannelModalOpen(false)}>×</button>
+              <button type="button" className="modal-close" onClick={() => setIsChannelModalOpen(false)} aria-label="Close channel dialog">×</button>
             </div>
             
             <div className="modal-body">
@@ -4730,6 +4950,7 @@ function App() {
                 className="modal-close" 
                 style={{ fontSize: '2rem', color: '#fff', background: 'rgba(0,0,0,0.5)', width: '40px', height: '40px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }} 
                 onClick={() => setPreviewImageUrl(null)}
+                aria-label="Close image preview dialog"
               >
                 ×
               </button>
