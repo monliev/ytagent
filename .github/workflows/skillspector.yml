@@ -1,0 +1,39 @@
+name: Agent Skill Security (SkillSpector)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.agents/**'
+      - 'scripts/**'
+      - '.skillspector-baseline.yaml'
+      - '.github/workflows/skillspector.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '.agents/**'
+      - 'scripts/**'
+      - '.skillspector-baseline.yaml'
+
+jobs:
+  security-audit:
+    name: NVIDIA SkillSpector Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install SkillSpector
+        run: |
+          python -m pip install --upgrade pip
+          pip install git+https://github.com/NVIDIA/skillspector.git
+
+      - name: Run SkillSpector Static Security Scan
+        run: |
+          python scripts/security_scan_skills.py --fail-on-findings
+
