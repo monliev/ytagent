@@ -44,3 +44,16 @@ test_out.txt
 
 # Docker
 *.override.yml
+
+# AI Agent Skills, Rules & Audit Artifacts (Local only)
+.agents/
+.github/
+.skillspector*
+anti-slop/
+AGENTS.md
+DESIGN.md
+scripts/security_scan_skills.py
+docs/DESIGN-*.md
+docs/SECURITY*.md
+scratch/
+test.db
