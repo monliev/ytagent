@@ -93,8 +93,22 @@ interface Channel {
   age_restricted: boolean;
   ai_generated: boolean;
   category_id: string | null;
+  is_oauth_connected?: boolean;
   created_at: string;
   updated_at: string;
+}
+
+interface GCPProject {
+  id: number;
+  project_name: string;
+  project_id: string;
+  account_label?: string | null;
+  quota_limit: number;
+  quota_used_today: number;
+  status: string;
+  is_default: boolean;
+  channel_id?: number | null;
+  created_at: string;
 }
 
 interface SystemLog {
@@ -255,6 +269,7 @@ function App() {
   const [chanTemplates, setChanTemplates] = useState<any[]>([]);
 
   // New Channel Settings form states
+  const [chanGcpProjectId, setChanGcpProjectId] = useState('');
   const [chanPlaylistId, setChanPlaylistId] = useState('');
   const [chanDefaultLanguage, setChanDefaultLanguage] = useState('');
   const [chanAgeRestricted, setChanAgeRestricted] = useState(false);
@@ -333,17 +348,16 @@ function App() {
   const [connectionStatusRecaptcha, setConnectionStatusRecaptcha] = useState<{status: 'idle'|'checking'|'connected'|'failed', detail: string}>({status: 'idle', detail: ''});
   const [connectionStatusSftp, setConnectionStatusSftp] = useState<{status: 'idle'|'checking'|'connected'|'failed', detail: string}>({status: 'idle', detail: ''});
 
-  // GCP Projects & Credentials state
-  const [selectedSettingsChannelId, setSelectedSettingsChannelId] = useState<number | ''>('');
-  const [channelProjects, setChannelProjects] = useState<any[]>([]);
+  // GCP Projects Pool & Credentials state
+  const [gcpPool, setGcpPool] = useState<GCPProject[]>([]);
+  const [loadingGcpPool, setLoadingGcpPool] = useState(false);
+  const [gcpAccountLabel, setGcpAccountLabel] = useState('');
+  const [gcpIsDefault, setGcpIsDefault] = useState(false);
+  const [showAddGcpModal, setShowAddGcpModal] = useState(false);
   const [gcpProjectName, setGcpProjectName] = useState('');
   const [gcpProjectId, setGcpProjectId] = useState('');
   const [gcpClientSecretJson, setGcpClientSecretJson] = useState('');
   const [gcpQuotaLimit, setGcpQuotaLimit] = useState(10000);
-  const [oauthGcpProjectId, setOauthGcpProjectId] = useState('');
-  const [oauthRefreshToken, setOauthRefreshToken] = useState('');
-  const [oauthStatus, setOauthStatus] = useState<{connected: boolean, gcp_project_id?: string, last_refreshed_at?: string, last_error?: string} | null>(null);
-  const [loadingOauthStatus, setLoadingOauthStatus] = useState(false);
   
   // UI Toast and loading indicators
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -426,6 +440,9 @@ function App() {
         const recentLogData = await recentLogRes.json();
         setRecentLogs(recentLogData.items);
       }
+
+      // 4. Fetch GCP Pool
+      fetchGcpPool();
 
       triggerToast('Dashboard data refreshed successfully.', 'success');
     } catch (e) {
@@ -549,39 +566,22 @@ function App() {
     }
   }, [token, selectedChannelId, logPage, logLevelFilter, logServiceFilter]);
 
-  // Sync settings and analytics selection with sidebar master dropdown selection
+  // Sync analytics selection with sidebar master dropdown selection
   useEffect(() => {
     if (selectedChannelId !== 'all') {
-      setSelectedSettingsChannelId(selectedChannelId);
       setSelectedAnalyticsChannelId(selectedChannelId);
     } else {
-      setSelectedSettingsChannelId('');
       setSelectedAnalyticsChannelId(null);
     }
   }, [selectedChannelId]);
 
-  // Load settings when tab is set to settings, and load projects when channel changes
+  // Load settings and GCP pool when tab is set to settings
   useEffect(() => {
     if (token && currentTab === 'settings') {
       fetchSettings();
-      if (selectedSettingsChannelId) {
-        fetchChannelProjects(selectedSettingsChannelId);
-        fetchOAuthStatus(selectedSettingsChannelId);
-        
-        // Auto-select active GCP project if already configured
-        const chan = channels.find(c => c.id === selectedSettingsChannelId);
-        if (chan && chan.gcp_project_id) {
-          setOauthGcpProjectId(chan.gcp_project_id);
-        } else {
-          setOauthGcpProjectId('');
-        }
-      } else {
-        setChannelProjects([]);
-        setOauthStatus(null);
-        setOauthGcpProjectId('');
-      }
+      fetchGcpPool();
     }
-  }, [token, currentTab, selectedSettingsChannelId, channels]);
+  }, [token, currentTab]);
 
   // Load channel analytics when tab changes to analytics
   useEffect(() => {
@@ -607,11 +607,7 @@ function App() {
       if (data && data.type === 'OAUTH_SUCCESS') {
         triggerToast('Successfully authorized YouTube Channel via Google!');
         refreshAllData();
-        setOauthRefreshToken('');
-        if (selectedSettingsChannelId) {
-          fetchChannelProjects(selectedSettingsChannelId);
-          fetchOAuthStatus(selectedSettingsChannelId);
-        }
+        fetchGcpPool();
       } else if (data && data.type === 'OAUTH_FAILED') {
         triggerToast(`Google Authorization failed: ${data.error}`, 'error');
       }
@@ -619,7 +615,7 @@ function App() {
 
     window.addEventListener('message', handleOAuthMessage);
     return () => window.removeEventListener('message', handleOAuthMessage);
-  }, [selectedSettingsChannelId]);
+  }, []);
 
   // Load system health periodically when dashboard tab is active or settings tab is active
   useEffect(() => {
@@ -878,172 +874,121 @@ function App() {
     );
   };
 
-  const fetchChannelProjects = async (chanId: number) => {
-    try {
-      const res = await fetch(`${API_URL}/channels/${chanId}/projects`, { headers: getHeaders() });
-      if (res.ok) {
-        const data = await res.json();
-        setChannelProjects(data);
-      }
-    } catch (e) {
-      console.error(e);
-    }
-  };
 
-  const fetchOAuthStatus = async (chanId: number) => {
-    setLoadingOauthStatus(true);
+  const fetchGcpPool = async () => {
+    setLoadingGcpPool(true);
     try {
-      const res = await fetch(`${API_URL}/channels/${chanId}/oauth-status`, { headers: getHeaders() });
+      const res = await fetch(`${API_URL}/channels/gcp/pool`, { headers: getHeaders() });
       if (res.ok) {
         const data = await res.json();
-        setOauthStatus(data);
+        setGcpPool(data);
       }
     } catch (e) {
-      console.error(e);
+      console.error("Failed to fetch GCP pool", e);
     } finally {
-      setLoadingOauthStatus(false);
+      setLoadingGcpPool(false);
     }
   };
 
-  const handleDisconnectOAuth = async () => {
-    if (!selectedSettingsChannelId) return;
-    if (!confirm('Are you sure you want to disconnect Google OAuth credentials for this channel?')) return;
-    try {
-      const res = await fetch(`${API_URL}/channels/${selectedSettingsChannelId}/disconnect`, {
-        method: 'POST',
-        headers: getHeaders()
-      });
-      if (res.ok) {
-        triggerToast('Channel disconnected successfully!');
-        fetchOAuthStatus(selectedSettingsChannelId);
-        // Refresh channels list to update gcp_project_id
-        const chanRes = await fetch(`${API_URL}/channels/`, { headers: getHeaders() });
-        if (chanRes.ok) {
-          const chanData = await chanRes.json();
-          setChannels(chanData);
-        }
-      } else {
-        triggerToast('Failed to disconnect channel.', 'error');
-      }
-    } catch (e) {
-      triggerToast('Network error disconnecting channel.', 'error');
-    }
-  };
-
-  const handleAddGcpProject = async (e: React.FormEvent) => {
+  const handleSaveGcpProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSettingsChannelId) return;
+    if (!gcpProjectName.trim() || !gcpProjectId.trim() || !gcpClientSecretJson.trim()) {
+      triggerToast('Lengkapi Nama Project, Project ID, dan Client Secrets JSON.', 'error');
+      return;
+    }
     try {
-      // Validate client secret json is a valid JSON
-      try {
-        JSON.parse(gcpClientSecretJson);
-      } catch (err) {
-        triggerToast('Client Secret must be a valid JSON format.', 'error');
-        return;
-      }
+      JSON.parse(gcpClientSecretJson);
+    } catch (err) {
+      triggerToast('Client Secret must be a valid JSON format.', 'error');
+      return;
+    }
 
-      const res = await fetch(`${API_URL}/channels/${selectedSettingsChannelId}/projects`, {
+    try {
+      const res = await fetch(`${API_URL}/channels/gcp/pool`, {
         method: 'POST',
         headers: getHeaders(),
         body: JSON.stringify({
-          project_name: gcpProjectName,
-          project_id: gcpProjectId,
-          client_secret_json: gcpClientSecretJson,
-          quota_limit: gcpQuotaLimit,
+          project_name: gcpProjectName.trim(),
+          project_id: gcpProjectId.trim(),
+          account_label: gcpAccountLabel.trim() || undefined,
+          client_secret_json: gcpClientSecretJson.trim(),
+          quota_limit: Number(gcpQuotaLimit) || 10000,
+          is_default: gcpIsDefault,
         })
       });
       if (res.ok) {
-        triggerToast('GCP Project added successfully!');
+        triggerToast('GCP Project berhasil disimpan ke Pool!');
         setGcpProjectName('');
         setGcpProjectId('');
+        setGcpAccountLabel('');
         setGcpClientSecretJson('');
-        fetchChannelProjects(selectedSettingsChannelId);
+        setGcpQuotaLimit(10000);
+        setGcpIsDefault(false);
+        setShowAddGcpModal(false);
+        fetchGcpPool();
       } else {
         const data = await res.json();
-        triggerToast(data.detail || 'Failed to add GCP project.', 'error');
+        triggerToast(data.detail || 'Gagal menyimpan GCP project.', 'error');
       }
     } catch (e) {
-      triggerToast('Network error adding GCP project.', 'error');
+      triggerToast('Network error saving GCP project.', 'error');
     }
   };
 
-  const handleDeleteGcpProject = async (projId: number) => {
-    if (!selectedSettingsChannelId) return;
-    if (!confirm('Are you sure you want to delete this GCP Project?')) return;
+  const handleDeleteGcpFromPool = async (projId: number) => {
+    if (!confirm('Yakin ingin menghapus GCP Project ini dari Pool?')) return;
     try {
-      const res = await fetch(`${API_URL}/channels/${selectedSettingsChannelId}/projects/${projId}`, {
+      const res = await fetch(`${API_URL}/channels/gcp/pool/${projId}`, {
         method: 'DELETE',
         headers: getHeaders()
       });
       if (res.ok) {
-        triggerToast('GCP Project deleted successfully.');
-        fetchChannelProjects(selectedSettingsChannelId);
+        triggerToast('GCP Project berhasil dihapus dari pool.');
+        fetchGcpPool();
       } else {
-        triggerToast('Failed to delete GCP project.', 'error');
+        triggerToast('Gagal menghapus GCP project.', 'error');
       }
     } catch (e) {
       triggerToast('Network error deleting GCP project.', 'error');
     }
   };
 
-  const handleSaveOAuthToken = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedSettingsChannelId || !oauthGcpProjectId) return;
+  const handleSetDefaultGcp = async (projId: number) => {
     try {
-      const res = await fetch(`${API_URL}/channels/${selectedSettingsChannelId}/credentials`, {
+      const res = await fetch(`${API_URL}/channels/gcp/pool/${projId}/set-default`, {
         method: 'POST',
-        headers: getHeaders(),
-        body: JSON.stringify({
-          gcp_project_id: oauthGcpProjectId,
-          refresh_token: oauthRefreshToken,
-        })
+        headers: getHeaders()
       });
       if (res.ok) {
-        triggerToast('OAuth Refresh Token saved successfully!');
-        setOauthRefreshToken('');
-        // Refresh OAuth status and all data
-        fetchOAuthStatus(selectedSettingsChannelId);
-        refreshAllData();
+        triggerToast('Default GCP Project berhasil diubah!');
+        fetchGcpPool();
       } else {
-        const data = await res.json();
-        triggerToast(data.detail || 'Failed to save OAuth token.', 'error');
+        triggerToast('Gagal mengubah default GCP project.', 'error');
       }
     } catch (e) {
-      triggerToast('Network error saving OAuth token.', 'error');
+      triggerToast('Network error updating default GCP project.', 'error');
     }
   };
 
-  const handleGoogleAuthFlow = async () => {
-    if (!selectedSettingsChannelId || !oauthGcpProjectId) {
-      triggerToast('Please select a GCP Project first.', 'error');
-      return;
-    }
-    
+  const handleConnectYouTube = async (channelId: number, targetProjectId?: string) => {
     try {
-      // Calculate dynamic redirect URI
       const redirectUri = getRedirectUri();
-      
+      const projParam = targetProjectId ? `&project_id=${encodeURIComponent(targetProjectId)}` : '';
       const res = await fetch(
-        `${API_URL}/channels/${selectedSettingsChannelId}/oauth-auth-url?project_id=${encodeURIComponent(oauthGcpProjectId)}&redirect_uri=${encodeURIComponent(redirectUri)}`,
-        {
-          headers: getHeaders()
-        }
+        `${API_URL}/channels/${channelId}/oauth-auth-url?redirect_uri=${encodeURIComponent(redirectUri)}${projParam}`,
+        { headers: getHeaders() }
       );
-      
       if (!res.ok) {
         const err = await res.json();
-        triggerToast(err.detail || 'Failed to generate Google Authorization URL.', 'error');
+        triggerToast(err.detail || 'Gagal generate Google Authorization URL.', 'error');
         return;
       }
-      
       const data = await res.json();
       if (data.auth_url) {
-        // Open Google OAuth authorization screen in a popup window
         const width = 600;
         const height = 700;
         const left = window.screenX + (window.outerWidth - width) / 2;
         const top = window.screenY + (window.outerHeight - height) / 2;
-        
         window.open(
           data.auth_url,
           'Google Authorization',
@@ -1051,7 +996,7 @@ function App() {
         );
       }
     } catch (e) {
-      triggerToast('Network error generating Google Auth URL.', 'error');
+      triggerToast('Network error saat membuka Google Auth.', 'error');
     }
   };
 
@@ -1588,6 +1533,7 @@ function App() {
     setChanMadeForKids(false);
     setChanUploadDaysInterval(1);
     setChanPreferredUploadTimes('');
+    setChanGcpProjectId('');
     setChanTemplates([{
       id: 'default',
       title_template: '',
@@ -1595,6 +1541,7 @@ function App() {
       tags: ''
     }]);
     fetchWatchFolders();
+    fetchGcpPool();
     setIsChannelModalOpen(true);
   };
 
@@ -1623,6 +1570,7 @@ function App() {
     setChanMadeForKids(channel.made_for_kids || false);
     setChanUploadDaysInterval(channel.upload_days_interval || 1);
     setChanPreferredUploadTimes(channel.preferred_upload_times || '');
+    setChanGcpProjectId(channel.gcp_project_id || '');
     
     if (channel.preset_templates && channel.preset_templates.length > 0) {
       setChanTemplates(channel.preset_templates.map(t => ({
@@ -1641,6 +1589,7 @@ function App() {
     }
     
     fetchWatchFolders();
+    fetchGcpPool();
     setIsChannelModalOpen(true);
   };
 
@@ -1708,6 +1657,7 @@ function App() {
       ai_generated: chanAiGenerated,
       category_id: chanCategoryId || null,
       made_for_kids: chanMadeForKids,
+      gcp_project_id: chanGcpProjectId || null,
       upload_days_interval: Number(chanUploadDaysInterval),
       preferred_upload_times: chanPreferredUploadTimes || null,
       preset_templates: processedTemplates.length > 0 ? processedTemplates : null,
@@ -2660,17 +2610,16 @@ function App() {
                             {video.last_error || '-'}
                           </td>
                           <td>
-                            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                               {['failed', 'error'].includes(video.status) && (
-                                <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => openEditModal(video)}>
+                                <button className="btn btn-sm btn-secondary" onClick={() => openEditModal(video)}>
                                   ✏️ Review / Retry
                                 </button>
                               )}
                               {isScheduled && (
                                 <>
                                   <button 
-                                    className="btn btn-secondary" 
-                                    style={{ padding: '4px 8px', fontSize: '0.85rem', opacity: canMoveUp ? 1 : 0.4, cursor: canMoveUp ? 'pointer' : 'not-allowed' }} 
+                                    className="btn btn-sm btn-icon btn-secondary" 
                                     disabled={!canMoveUp} 
                                     onClick={() => moveVideoInQueue(video.id, 'up')}
                                     title="Move Up"
@@ -2678,8 +2627,7 @@ function App() {
                                     ⬆️
                                   </button>
                                   <button 
-                                    className="btn btn-secondary" 
-                                    style={{ padding: '4px 8px', fontSize: '0.85rem', opacity: canMoveDown ? 1 : 0.4, cursor: canMoveDown ? 'pointer' : 'not-allowed' }} 
+                                    className="btn btn-sm btn-icon btn-secondary" 
                                     disabled={!canMoveDown} 
                                     onClick={() => moveVideoInQueue(video.id, 'down')}
                                     title="Move Down"
@@ -2719,37 +2667,17 @@ function App() {
                   <h1>Video Queue Schedule</h1>
                   <p>Visualize, track, and reschedule upcoming video uploads sequentially</p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', background: 'rgba(0,0,0,0.2)', padding: '4px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                <div style={{ display: 'flex', gap: '4px', background: 'var(--bg-card)', padding: '3px', borderRadius: 'var(--radius-pill)', border: '1px solid var(--border-color)' }}>
                   <button
                     type="button"
-                    className="btn"
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '0.8rem',
-                      borderRadius: '6px',
-                      background: scheduleViewMode === 'calendar' ? 'var(--primary)' : 'transparent',
-                      color: scheduleViewMode === 'calendar' ? '#fff' : 'var(--text-secondary)',
-                      border: 'none',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
+                    className={`btn btn-sm ${scheduleViewMode === 'calendar' ? 'btn-primary' : 'btn-ghost'}`}
                     onClick={() => setScheduleViewMode('calendar')}
                   >
                     📅 Grid View
                   </button>
                   <button
                     type="button"
-                    className="btn"
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: '0.8rem',
-                      borderRadius: '6px',
-                      background: scheduleViewMode === 'list' ? 'var(--primary)' : 'transparent',
-                      color: scheduleViewMode === 'list' ? '#fff' : 'var(--text-secondary)',
-                      border: 'none',
-                      fontWeight: 600,
-                      cursor: 'pointer'
-                    }}
+                    className={`btn btn-sm ${scheduleViewMode === 'list' ? 'btn-primary' : 'btn-ghost'}`}
                     onClick={() => setScheduleViewMode('list')}
                   >
                     📋 List View
@@ -2838,10 +2766,10 @@ function App() {
                                 value={rescheduleTime}
                                 onChange={e => setRescheduleTime(e.target.value)}
                               />
-                              <button className="btn btn-primary" style={{ padding: '2px 8px', fontSize: '0.7rem', height: '26px' }} onClick={() => handleRescheduleVideoSubmit(v.id)}>
+                              <button className="btn btn-sm btn-primary" onClick={() => handleRescheduleVideoSubmit(v.id)}>
                                 Save
                               </button>
-                              <button className="btn btn-secondary" style={{ padding: '2px 8px', fontSize: '0.7rem', height: '26px' }} onClick={() => setReschedulingVideoId(null)}>
+                              <button className="btn btn-sm btn-secondary" onClick={() => setReschedulingVideoId(null)}>
                                 Cancel
                               </button>
                             </div>
@@ -2850,10 +2778,10 @@ function App() {
 
                         {/* Inline Actions */}
                         {!isEditing && (
-                          <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
                             <button
-                              className="btn btn-secondary"
-                              style={{ padding: '4px 8px', fontSize: '0.72rem', display: 'flex', alignItems: 'center', gap: '3px' }}
+                              type="button"
+                              className="btn btn-sm btn-secondary"
                               onClick={() => {
                                 setReschedulingVideoId(v.id);
                                 const d = new Date(v.scheduled_time!);
@@ -2865,25 +2793,15 @@ function App() {
                               🕒 Reschedule
                             </button>
                             <button
-                              className="btn"
-                              style={{
-                                padding: '4px 8px',
-                                fontSize: '0.72rem',
-                                background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
-                                color: '#fff',
-                                border: 'none',
-                                fontWeight: 600,
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '3px'
-                              }}
+                              type="button"
+                              className="btn btn-sm btn-primary"
                               onClick={() => handlePublishNowSubmit(v.id)}
                             >
                               🚀 Publish
                             </button>
                             <button
-                              className="btn btn-danger"
-                              style={{ padding: '4px 8px', fontSize: '0.72rem' }}
+                              type="button"
+                              className="btn btn-sm btn-danger"
                               onClick={() => handleMoveToStagingSubmit(v.id)}
                               title="Return to staging area"
                             >
@@ -2973,10 +2891,10 @@ function App() {
                                         onChange={e => setRescheduleTime(e.target.value)}
                                       />
                                       <div style={{ display: 'flex', gap: '4px' }}>
-                                        <button className="btn btn-primary" style={{ padding: '2px 6px', fontSize: '0.7rem', flex: 1 }} onClick={() => handleRescheduleVideoSubmit(v.id)}>
+                                        <button type="button" className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => handleRescheduleVideoSubmit(v.id)}>
                                           Save
                                         </button>
-                                        <button className="btn btn-secondary" style={{ padding: '2px 6px', fontSize: '0.7rem', flex: 1 }} onClick={() => setReschedulingVideoId(null)}>
+                                        <button type="button" className="btn btn-sm btn-secondary" style={{ flex: 1 }} onClick={() => setReschedulingVideoId(null)}>
                                           Cancel
                                         </button>
                                       </div>
@@ -2984,8 +2902,9 @@ function App() {
                                   ) : (
                                     <div style={{ display: 'flex', gap: '4px', marginTop: 'auto' }}>
                                       <button
-                                        className="btn btn-secondary"
-                                        style={{ padding: '3px 6px', fontSize: '0.68rem', flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                                        type="button"
+                                        className="btn btn-sm btn-secondary"
+                                        style={{ flex: 1 }}
                                         onClick={() => {
                                           setReschedulingVideoId(v.id);
                                           const d = new Date(v.scheduled_time!);
@@ -2998,27 +2917,16 @@ function App() {
                                         🕒 Reschedule
                                       </button>
                                       <button
-                                        className="btn btn-danger"
-                                        style={{ padding: '3px 6px', fontSize: '0.68rem', width: '30px', display: 'flex', justifyContent: 'center', alignItems: 'center' }}
+                                        type="button"
+                                        className="btn btn-sm btn-icon btn-danger"
                                         onClick={() => handleMoveToStagingSubmit(v.id)}
                                         title="Move back to Staging"
                                       >
                                         📥
                                       </button>
                                       <button
-                                        className="btn"
-                                        style={{
-                                          padding: '3px 6px',
-                                          fontSize: '0.68rem',
-                                          background: 'linear-gradient(135deg, #3b82f6, #2563eb)',
-                                          color: '#fff',
-                                          border: 'none',
-                                          fontWeight: 600,
-                                          width: '30px',
-                                          display: 'flex',
-                                          justifyContent: 'center',
-                                          alignItems: 'center'
-                                        }}
+                                        type="button"
+                                        className="btn btn-sm btn-icon btn-primary"
                                         onClick={() => handlePublishNowSubmit(v.id)}
                                         title="Upload immediately now"
                                       >
@@ -3282,6 +3190,7 @@ function App() {
                     <th>Upload Time</th>
                     <th>Status</th>
                     <th>Auto Approve</th>
+                    <th>YouTube Connect</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
@@ -3300,11 +3209,38 @@ function App() {
                       </td>
                       <td>{channel.auto_approve ? '✅ Yes' : '❌ No'}</td>
                       <td>
-                        <div style={{ display: 'flex', gap: '8px' }}>
-                          <button className="btn btn-secondary" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => openEditChannelModal(channel)}>
+                        {channel.is_oauth_connected ? (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--success)', fontWeight: 600, background: 'rgba(52, 199, 89, 0.12)', padding: '4px 10px', borderRadius: 'var(--radius-pill)', border: '1px solid rgba(52, 199, 89, 0.25)' }}>
+                            🟢 Terhubung
+                          </span>
+                        ) : (
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem', color: 'var(--danger)', fontWeight: 600, background: 'rgba(255, 59, 48, 0.12)', padding: '4px 10px', borderRadius: 'var(--radius-pill)', border: '1px solid rgba(255, 59, 48, 0.25)' }}>
+                            🔴 Belum Konek
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            onClick={() => handleConnectYouTube(channel.id, channel.gcp_project_id || undefined)}
+                            title={channel.is_oauth_connected ? "Koneksikan ulang akun Google/YouTube" : "Koneksikan ke YouTube dengan 1-Klik"}
+                          >
+                            🔗 {channel.is_oauth_connected ? 'Re-Auth' : 'Connect'}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => openEditChannelModal(channel)}
+                          >
                             ✏️ Edit
                           </button>
-                          <button className="btn btn-danger" style={{ padding: '6px 12px', fontSize: '0.8rem' }} onClick={() => handleDeleteChannel(channel.id)}>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-danger"
+                            onClick={() => handleDeleteChannel(channel.id)}
+                          >
                             🗑️ Delete
                           </button>
                         </div>
@@ -3461,9 +3397,9 @@ function App() {
                     </div>
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="btn btn-sm btn-secondary"
                       onClick={testTelegramConnection}
-                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '4px' }}
+                      style={{ alignSelf: 'flex-start' }}
                     >
                       🔌 Test Telegram Bot
                     </button>
@@ -3516,9 +3452,9 @@ function App() {
                     </div>
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="btn btn-sm btn-secondary"
                       onClick={testCloudflareConnection}
-                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '4px', cursor: 'not-allowed' }}
+                      style={{ alignSelf: 'flex-start' }}
                       disabled={true}
                     >
                       🔌 Test Cloudflare AI
@@ -3557,9 +3493,9 @@ function App() {
                     </div>
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="btn btn-sm btn-secondary"
                       onClick={testRecaptchaConnection}
-                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '10px' }}
+                      style={{ alignSelf: 'flex-start' }}
                     >
                       🔌 Test reCAPTCHA Config
                     </button>
@@ -3636,9 +3572,9 @@ function App() {
                     </div>
                     <button
                       type="button"
-                      className="btn btn-secondary"
+                      className="btn btn-sm btn-secondary"
                       onClick={testSftpConnection}
-                      style={{ alignSelf: 'flex-start', fontSize: '0.8rem', padding: '6px 12px', marginTop: '4px' }}
+                      style={{ alignSelf: 'flex-start' }}
                     >
                       🔌 Test SFTP/NAS Connection
                     </button>
@@ -3653,16 +3589,30 @@ function App() {
 
 
 
-              {/* GCP Projects & OAuth Manager Card */}
-              <div className="card" style={{ padding: '24px', gap: '16px' }}>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 700, borderBottom: '1px solid var(--border-color)', paddingBottom: '12px', marginBottom: '8px' }}>
-                  🔑 GCP Projects & OAuth Manager
-                </h3>
+              {/* GCP Projects Pool Manager Card */}
+              <div className="card" style={{ padding: '24px', gap: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-color)', paddingBottom: '12px' }}>
+                  <div>
+                    <h3 style={{ fontSize: '1.2rem', fontWeight: 700, margin: 0 }}>
+                      🔑 GCP Projects Pool Manager
+                    </h3>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      Kelola 1 atau banyak GCP Project (multi-akun). Channel YouTube akan menggunakan Default GCP Project otomatis.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-primary"
+                    onClick={() => setShowAddGcpModal(!showAddGcpModal)}
+                  >
+                    {showAddGcpModal ? '✕ Tutup Form' : '➕ Daftarkan GCP Project'}
+                  </button>
+                </div>
 
-                {/* Styled Quick Helper Guide & Console Links */}
+                {/* Setup & Anti-Expiry Guide Box */}
                 <div style={{
                   background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.08) 100%)',
-                  border: '1px solid rgba(99, 102, 241, 0.2)',
+                  border: '1px solid rgba(99, 102, 241, 0.25)',
                   borderRadius: 'var(--radius-md)',
                   padding: '16px',
                   display: 'flex',
@@ -3671,488 +3621,221 @@ function App() {
                   fontSize: '0.85rem'
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)', fontWeight: 600 }}>
-                    ℹ️ Quick Setup Guide & Google Cloud Console Links
+                    💡 Panduan Anti-Expire & OAuth Setup
                   </div>
-                  <div style={{ color: 'var(--text-secondary)', lineHeight: '1.45' }}>
-                    Setup YouTube API access and register your credentials in a few steps. Need help? Use the quick links below.
+                  
+                  <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid rgba(245, 158, 11, 0.3)', borderRadius: '6px', padding: '10px 14px', color: '#f59e0b', fontSize: '0.82rem', lineHeight: '1.5' }}>
+                    <strong>⚠️ Agar Refresh Token Tidak Expire Setiap 7 Hari:</strong><br />
+                    Di Google Cloud Console &gt; <em>OAuth consent screen</em>, pastikan Publishing Status diubah dari <strong>"Testing"</strong> menjadi <strong>"In Production"</strong> (Publikasikan aplikasi). Aplikasi internal/personal tidak memerlukan verifikasi Google untuk upload YouTube.
                   </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px' }}>
-                    <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', padding: '6px 12px', fontSize: '0.8rem' }}>
-                      🌐 Google Cloud Console
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                      Daftarkan URI berikut pada <strong>Authorized redirect URIs</strong> di GCP Console:
+                    </span>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <code style={{ background: 'rgba(0,0,0,0.3)', padding: '6px 10px', borderRadius: '4px', fontSize: '0.8rem', flex: 1, overflowX: 'auto' }}>
+                        {getRedirectUri()}
+                      </code>
+                      <button
+                        type="button"
+                        className="btn btn-sm btn-secondary"
+                        onClick={() => {
+                          navigator.clipboard.writeText(getRedirectUri());
+                          triggerToast('Redirect URI disalin ke clipboard!');
+                        }}
+                      >
+                        📋 Salin
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '4px' }}>
+                    <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ textDecoration: 'none' }}>
+                      🌐 Cloud Console
                     </a>
-                    <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', padding: '6px 12px', fontSize: '0.8rem' }}>
+                    <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ textDecoration: 'none' }}>
                       🎬 Enable YouTube API
                     </a>
-                    <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', padding: '6px 12px', fontSize: '0.8rem' }}>
-                      🔑 GCP Credentials Screen
-                    </a>
-                    <a href="https://developers.google.com/oauthplayground/" target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', textDecoration: 'none', padding: '6px 12px', fontSize: '0.8rem' }}>
-                      ⚙️ OAuth 2.0 Playground
+                    <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="btn btn-sm btn-secondary" style={{ textDecoration: 'none' }}>
+                      🔑 GCP Credentials
                     </a>
                   </div>
-                  <details style={{ marginTop: '4px', cursor: 'pointer' }}>
-                    <summary style={{ color: 'var(--primary)', fontWeight: 600, fontSize: '0.8rem', outline: 'none' }}>
-                      📖 View Step-by-Step Setup Guide
-                    </summary>
-                    <div style={{ color: 'var(--text-secondary)', padding: '12px 4px 4px 4px', fontSize: '0.8rem', cursor: 'default', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <div>
-                        <strong>Step 1: Enable YouTube API</strong>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Go to the Google Cloud Console link above, create or select a project, and enable the <strong>YouTube Data API v3</strong>.</p>
-                      </div>
-                      <div>
-                        <strong>Step 2: Configure Consent Screen</strong>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Set up your <a href="https://console.cloud.google.com/apis/credentials/consent" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--primary)' }}>OAuth Consent Screen</a> as <strong>External</strong> and add your target YouTube Google account as a <strong>Test User</strong>.</p>
-                      </div>
-                      <div>
-                        <strong>Step 3: Create OAuth Client ID</strong>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Go to Credentials, click "Create Credentials" → "OAuth client ID" (Application type: <strong>Web application</strong>).</p>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Add the following to <strong>Authorized redirect URIs</strong> in GCP Console:</p>
-                        <ul style={{ margin: '4px 0 4px 20px', padding: 0, color: 'var(--text-muted)' }}>
-                          <li>For One-Click Login (popup): <code>{getRedirectUri()}</code></li>
-                          <li>For Playground (manual): <code>https://developers.google.com/oauthplayground</code></li>
-                        </ul>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Download the Client Secrets JSON file, open it, and paste the entire JSON string into the "Client Secrets JSON" field below.</p>
-                      </div>
-                      <div>
-                        <strong>Step 4: Generate OAuth Refresh Token</strong>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Go to OAuth 2.0 Playground, click the gear icon (top right):</p>
-                        <ul style={{ margin: '4px 0 4px 20px', padding: 0, color: 'var(--text-muted)' }}>
-                          <li>Check "Use your own OAuth credentials"</li>
-                          <li>Enter your Client ID and Client Secret (from downloaded JSON)</li>
-                          <li>Close settings</li>
-                        </ul>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>In Step 1 of Playground, input scope: <code>https://www.googleapis.com/auth/youtube.upload</code> and click <strong>Authorize APIs</strong>.</p>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Sign in to your target YouTube Google account, grant permissions, then in Step 2 click <strong>Exchange authorization code for tokens</strong>.</p>
-                        <p style={{ margin: '2px 0 0 0', color: 'var(--text-muted)' }}>Copy the generated <code>refresh_token</code> and paste it in the "OAuth Refresh Token" field below.</p>
-                      </div>
-                    </div>
-                  </details>
                 </div>
 
-                {selectedSettingsChannelId && (
-                  <div style={{ padding: '8px 12px', borderRadius: '6px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', display: 'inline-flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', color: 'var(--text-secondary)', alignSelf: 'flex-start' }}>
-                    <span>Target Channel Context:</span>
-                    <strong style={{ color: 'var(--primary)' }}>
-                      {channels.find(c => c.id === selectedSettingsChannelId)?.name || `ID: ${selectedSettingsChannelId}`}
-                    </strong>
-                  </div>
-                )}
-
-                {selectedSettingsChannelId ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-                    
-                    {/* Active GCP Projects List */}
-                    <div>
-                      <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                        Active GCP Projects for Channel
-                      </h4>
-                      {channelProjects.length > 0 ? (
-                        <div className="table-container" style={{ margin: 0, border: '1px solid var(--border-color)', borderRadius: '8px' }}>
-                          <table style={{ fontSize: '0.85rem' }}>
-                            <thead>
-                              <tr>
-                                <th>Project Name</th>
-                                <th>Project ID</th>
-                                <th>Quota Limit</th>
-                                <th>Actions</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {channelProjects.map(p => (
-                                <tr key={p.id}>
-                                  <td style={{ fontWeight: 600 }}>{p.project_name}</td>
-                                  <td>{p.project_id}</td>
-                                  <td>{p.quota_limit.toLocaleString()}</td>
-                                  <td>
-                                    <button 
-                                      className="btn btn-danger" 
-                                      style={{ padding: '4px 8px', fontSize: '0.75rem' }} 
-                                      onClick={() => handleDeleteGcpProject(p.id)}
-                                    >
-                                      🗑️ Delete
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      ) : (
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>No GCP Projects configured for this channel yet.</p>
-                      )}
-                    </div>
-
-                    {/* Add GCP Project Form */}
-                    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-                      <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                        ➕ Register New GCP Project
-                      </h4>
-                      <form onSubmit={handleAddGcpProject} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                          <div className="form-group">
-                            <label htmlFor="gcp-name">Project Name</label>
-                            <input
-                              id="gcp-name"
-                              type="text"
-                              className="form-input"
-                              value={gcpProjectName}
-                              onChange={e => setGcpProjectName(e.target.value)}
-                              placeholder="e.g. My YT Uploader"
-                              required
-                            />
-                          </div>
-                          <div className="form-group">
-                            <label htmlFor="gcp-id">Project ID</label>
-                            <input
-                              id="gcp-id"
-                              type="text"
-                              className="form-input"
-                              value={gcpProjectId}
-                              onChange={e => setGcpProjectId(e.target.value)}
-                              placeholder="e.g. yt-uploader-12345"
-                              required
-                            />
-                          </div>
-                        </div>
-
+                {/* Form to Register New Project (Inline Toggle) */}
+                {showAddGcpModal && (
+                  <div style={{
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '20px'
+                  }}>
+                    <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '16px' }}>
+                      ➕ Registrasi GCP Project ke Pool
+                    </h4>
+                    <form onSubmit={handleSaveGcpProject} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                         <div className="form-group">
-                          <label htmlFor="gcp-json">Client Secrets JSON</label>
-                          <textarea
-                            id="gcp-json"
+                          <label htmlFor="gcp-name">Nama Project</label>
+                          <input
+                            id="gcp-name"
+                            type="text"
                             className="form-input"
-                            style={{ minHeight: '100px', fontFamily: 'monospace', fontSize: '0.8rem' }}
-                            value={gcpClientSecretJson}
-                            onChange={e => setGcpClientSecretJson(e.target.value)}
-                            placeholder='{"web":{"client_id":"...","client_secret":"..."}}'
+                            value={gcpProjectName}
+                            onChange={e => setGcpProjectName(e.target.value)}
+                            placeholder="e.g. My YouTube Uploader 1"
                             required
                           />
                         </div>
+                        <div className="form-group">
+                          <label htmlFor="gcp-id">Project ID</label>
+                          <input
+                            id="gcp-id"
+                            type="text"
+                            className="form-input"
+                            value={gcpProjectId}
+                            onChange={e => setGcpProjectId(e.target.value)}
+                            placeholder="e.g. yt-uploader-12345"
+                            required
+                          />
+                        </div>
+                      </div>
 
-                        <div className="form-group" style={{ width: '50%' }}>
-                          <label htmlFor="gcp-quota">Daily Quota Limit</label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div className="form-group">
+                          <label htmlFor="gcp-account-label">Label / Catatan Akun</label>
+                          <input
+                            id="gcp-account-label"
+                            type="text"
+                            className="form-input"
+                            value={gcpAccountLabel}
+                            onChange={e => setGcpAccountLabel(e.target.value)}
+                            placeholder="e.g. Akun Utama (Gmail A)"
+                          />
+                        </div>
+                        <div className="form-group">
+                          <label htmlFor="gcp-quota">Batas Kuota Harian (Quota Limit)</label>
                           <input
                             id="gcp-quota"
                             type="number"
                             className="form-input"
                             value={gcpQuotaLimit}
-                            onChange={e => setGcpQuotaLimit(parseInt(e.target.value))}
+                            onChange={e => setGcpQuotaLimit(parseInt(e.target.value) || 10000)}
                             required
                           />
                         </div>
+                      </div>
 
-                        <button type="submit" className="btn btn-primary" style={{ alignSelf: 'flex-start', marginTop: '4px' }}>
-                          ➕ Add GCP Project
+                      <div className="form-group">
+                        <label htmlFor="gcp-json">Client Secrets JSON</label>
+                        <textarea
+                          id="gcp-json"
+                          className="form-input"
+                          style={{ minHeight: '110px', fontFamily: 'monospace', fontSize: '0.8rem' }}
+                          value={gcpClientSecretJson}
+                          onChange={e => setGcpClientSecretJson(e.target.value)}
+                          placeholder='Paste seluruh isi file client_secret_xxxx.json dari GCP...'
+                          required
+                        />
+                      </div>
+
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                        <input
+                          type="checkbox"
+                          checked={gcpIsDefault}
+                          onChange={e => setGcpIsDefault(e.target.checked)}
+                        />
+                        Jadikan Default Project untuk Channel YouTube
+                      </label>
+
+                      <div style={{ display: 'flex', gap: '10px', marginTop: '6px' }}>
+                        <button type="submit" className="btn btn-primary">
+                          💾 Simpan GCP Project
                         </button>
-                      </form>
-                    </div>
-
-                    {/* Channel OAuth Credentials Status & Form */}
-                    <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-                      <h4 style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px' }}>
-                        🔑 Google OAuth Connection Status
-                      </h4>
-
-                      {/* Display Status Header */}
-                      {loadingOauthStatus ? (
-                        <div style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border-color)', borderRadius: '8px', fontSize: '0.85rem' }}>
-                          🔄 Checking connection status...
-                        </div>
-                      ) : oauthStatus?.connected ? (
-                        <div style={{
-                          padding: '16px',
-                          background: 'rgba(52, 168, 83, 0.08)',
-                          border: '1px solid var(--success)',
-                          borderRadius: '8px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '12px',
-                          marginBottom: '16px'
-                        }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ color: 'var(--success)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem' }}>
-                              🟢 Connected to YouTube OAuth
-                            </span>
-                            <button
-                              type="button"
-                              className="btn btn-danger"
-                              style={{ padding: '6px 12px', fontSize: '0.75rem', fontWeight: 600 }}
-                              onClick={handleDisconnectOAuth}
-                            >
-                              🔌 Disconnect
-                            </button>
-                          </div>
-                          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: '1.5' }}>
-                            <strong>Active GCP Project:</strong> <code style={{ background: 'rgba(255,255,255,0.05)', padding: '2px 6px', borderRadius: '4px' }}>{oauthStatus.gcp_project_id}</code> <br />
-                            {oauthStatus.last_refreshed_at && (
-                              <span>
-                                <strong>Last Refreshed:</strong> {new Date(oauthStatus.last_refreshed_at).toLocaleString()} <br />
-                              </span>
-                            )}
-                            {oauthStatus.last_error && (
-                              <div style={{ color: 'var(--danger)', marginTop: '4px' }}>
-                                <strong>Last Error:</strong> {oauthStatus.last_error}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        <div style={{
-                          padding: '16px',
-                          background: 'rgba(234, 67, 53, 0.08)',
-                          border: '1px solid var(--danger)',
-                          borderRadius: '8px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          color: 'var(--danger)',
-                          fontWeight: 600,
-                          fontSize: '0.95rem',
-                          marginBottom: '16px'
-                        }}>
-                          🔴 Not Connected (Please complete authorization below)
-                        </div>
-                      )}
-
-                      {/* Render Credentials Forms */}
-                      {oauthStatus?.connected ? (
-                        <details style={{
-                          background: 'rgba(255, 255, 255, 0.01)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '8px',
-                          padding: '12px'
-                        }}>
-                          <summary style={{ cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-muted)' }}>
-                            Change Connection / Reconnect Options
-                          </summary>
-                          <div style={{ marginTop: '16px' }}>
-                            <form onSubmit={handleSaveOAuthToken} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                              <div className="form-group">
-                                <label htmlFor="oauth-gcp-project">Target GCP Project ID</label>
-                                <select
-                                  id="oauth-gcp-project"
-                                  className="form-input"
-                                  value={oauthGcpProjectId}
-                                  onChange={e => setOauthGcpProjectId(e.target.value)}
-                                  required
-                                >
-                                  <option value="">-- Select GCP Project --</option>
-                                  {channelProjects.map(p => (
-                                    <option key={p.id} value={p.project_id}>{p.project_name} ({p.project_id})</option>
-                                  ))}
-                                </select>
-                              </div>
-
-                              {/* Option A: One-Click Google Auth */}
-                              <div style={{
-                                padding: '16px',
-                                background: 'rgba(255, 255, 255, 0.02)',
-                                border: '1px solid var(--border-color)',
-                                borderRadius: 'var(--radius-md)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '10px'
-                              }}>
-                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                  Option A: One-Click Google Authorization (Recommended)
-                                </span>
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-                                  Click the button below to authorize this channel using Google's secure popup window.
-                                </span>
-                                <button
-                                  type="button"
-                                  className="btn btn-primary"
-                                  disabled={!oauthGcpProjectId}
-                                  onClick={handleGoogleAuthFlow}
-                                  style={{
-                                    background: oauthGcpProjectId 
-                                      ? 'linear-gradient(135deg, #4285f4 0%, #34a853 100%)' 
-                                      : 'var(--bg-card)',
-                                    border: oauthGcpProjectId ? 'none' : '1px solid var(--border-color)',
-                                    alignSelf: 'flex-start',
-                                    fontWeight: 600,
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    padding: '8px 16px',
-                                    cursor: oauthGcpProjectId ? 'pointer' : 'not-allowed'
-                                  }}
-                                >
-                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-                                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
-                                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
-                                  </svg>
-                                  Authorize Channel with Google
-                                </button>
-                                {!oauthGcpProjectId && (
-                                  <span style={{ fontSize: '0.75rem', color: 'var(--danger)' }}>
-                                    * Please select a target GCP project above first.
-                                  </span>
-                                )}
-                              </div>
-
-                              {/* Option B: Manual token fallback */}
-                              <div style={{
-                                padding: '16px',
-                                background: 'rgba(255, 255, 255, 0.02)',
-                                border: '1px solid var(--border-color)',
-                                borderRadius: 'var(--radius-md)',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '12px'
-                              }}>
-                                <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                  Option B: Manual Refresh Token Entry (Alternative)
-                                </span>
-                                <div className="form-group" style={{ margin: 0 }}>
-                                  <label htmlFor="oauth-refresh-token" style={{ marginBottom: '6px' }}>OAuth Refresh Token</label>
-                                  <input
-                                    id="oauth-refresh-token"
-                                    type="password"
-                                    className="form-input"
-                                    value={oauthRefreshToken}
-                                    onChange={e => setOauthRefreshToken(e.target.value)}
-                                    placeholder="Enter Google OAuth refresh token manually..."
-                                  />
-                                </div>
-                                <button 
-                                  type="submit" 
-                                  className="btn btn-primary" 
-                                  disabled={!oauthRefreshToken}
-                                  style={{ 
-                                    alignSelf: 'flex-start', 
-                                    opacity: oauthRefreshToken ? 1 : 0.6,
-                                    cursor: oauthRefreshToken ? 'pointer' : 'not-allowed'
-                                  }}
-                                >
-                                  💾 Save Channel Credentials
-                                </button>
-                              </div>
-                            </form>
-                          </div>
-                        </details>
-                      ) : (
-                        <div style={{
-                          background: 'rgba(255, 255, 255, 0.01)',
-                          border: '1px solid var(--border-color)',
-                          borderRadius: '8px',
-                          padding: '16px'
-                        }}>
-                          <form onSubmit={handleSaveOAuthToken} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                            <div className="form-group">
-                              <label htmlFor="oauth-gcp-project">Target GCP Project ID</label>
-                              <select
-                                id="oauth-gcp-project"
-                                className="form-input"
-                                value={oauthGcpProjectId}
-                                onChange={e => setOauthGcpProjectId(e.target.value)}
-                                required
-                              >
-                                <option value="">-- Select GCP Project --</option>
-                                {channelProjects.map(p => (
-                                  <option key={p.id} value={p.project_id}>{p.project_name} ({p.project_id})</option>
-                                ))}
-                              </select>
-                            </div>
-
-                            {/* Option A: One-Click Google Auth */}
-                            <div style={{
-                              padding: '16px',
-                              background: 'rgba(255, 255, 255, 0.02)',
-                              border: '1px solid var(--border-color)',
-                              borderRadius: 'var(--radius-md)',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '10px'
-                            }}>
-                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                Option A: One-Click Google Authorization (Recommended)
-                              </span>
-                              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
-                                Click the button below to authorize this channel using Google's secure popup window.
-                              </span>
-                              <button
-                                type="button"
-                                className="btn btn-primary"
-                                disabled={!oauthGcpProjectId}
-                                onClick={handleGoogleAuthFlow}
-                                style={{
-                                  background: oauthGcpProjectId 
-                                    ? 'linear-gradient(135deg, #4285f4 0%, #34a853 100%)' 
-                                    : 'var(--bg-card)',
-                                  border: oauthGcpProjectId ? 'none' : '1px solid var(--border-color)',
-                                  alignSelf: 'flex-start',
-                                  fontWeight: 600,
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '8px',
-                                  padding: '8px 16px',
-                                  cursor: oauthGcpProjectId ? 'pointer' : 'not-allowed'
-                                }}
-                              >
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="white">
-                                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-                                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-                                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"/>
-                                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"/>
-                                </svg>
-                                Authorize Channel with Google
-                              </button>
-                              {!oauthGcpProjectId && (
-                                <span style={{ fontSize: '0.75rem', color: 'var(--danger)' }}>
-                                  * Please select a target GCP project above first.
-                                </span>
-                              )}
-                            </div>
-
-                            {/* Option B: Manual token fallback */}
-                            <div style={{
-                              padding: '16px',
-                              background: 'rgba(255, 255, 255, 0.02)',
-                              border: '1px solid var(--border-color)',
-                              borderRadius: 'var(--radius-md)',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: '12px'
-                            }}>
-                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-                                Option B: Manual Refresh Token Entry (Alternative)
-                              </span>
-                              <div className="form-group" style={{ margin: 0 }}>
-                                <label htmlFor="oauth-refresh-token" style={{ marginBottom: '6px' }}>OAuth Refresh Token</label>
-                                <input
-                                  id="oauth-refresh-token"
-                                  type="password"
-                                  className="form-input"
-                                  value={oauthRefreshToken}
-                                  onChange={e => setOauthRefreshToken(e.target.value)}
-                                  placeholder="Enter Google OAuth refresh token manually..."
-                                />
-                              </div>
-                              <button 
-                                type="submit" 
-                                className="btn btn-primary" 
-                                disabled={!oauthRefreshToken}
-                                style={{ 
-                                  alignSelf: 'flex-start', 
-                                  opacity: oauthRefreshToken ? 1 : 0.6,
-                                  cursor: oauthRefreshToken ? 'pointer' : 'not-allowed'
-                                }}
-                              >
-                                💾 Save Channel Credentials
-                              </button>
-                            </div>
-                          </form>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ padding: '40px 20px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)' }}>
-                    Please select a channel in the header dropdown to manage credentials and GCP projects.
+                        <button type="button" className="btn btn-secondary" onClick={() => setShowAddGcpModal(false)}>
+                          Batal
+                        </button>
+                      </div>
+                    </form>
                   </div>
                 )}
+
+                {/* Pool Table */}
+                <div>
+                  <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <span>Daftar GCP Projects di Pool ({gcpPool.length})</span>
+                    <button type="button" className="btn btn-sm btn-secondary" onClick={fetchGcpPool} disabled={loadingGcpPool}>
+                      🔄 Refresh Pool
+                    </button>
+                  </h4>
+
+                  {loadingGcpPool ? (
+                    <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      Memuat daftar GCP Project...
+                    </div>
+                  ) : gcpPool.length > 0 ? (
+                    <div className="table-container" style={{ margin: 0, border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                      <table style={{ fontSize: '0.85rem' }}>
+                        <thead>
+                          <tr>
+                            <th>Status</th>
+                            <th>Nama Project</th>
+                            <th>Label Akun</th>
+                            <th>Project ID</th>
+                            <th>Pemakaian Kuota</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {gcpPool.map(p => (
+                            <tr key={p.id}>
+                              <td>
+                                {p.is_default ? (
+                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', padding: '3px 8px', borderRadius: 'var(--radius-pill)', fontWeight: 700, fontSize: '0.75rem' }}>
+                                    ★ DEFAULT
+                                  </span>
+                                ) : (
+                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Pool</span>
+                                )}
+                              </td>
+                              <td style={{ fontWeight: 600 }}>{p.project_name}</td>
+                              <td>{p.account_label || '-'}</td>
+                              <td><code style={{ fontSize: '0.8rem' }}>{p.project_id}</code></td>
+                              <td>{p.quota_used_today.toLocaleString()} / {p.quota_limit.toLocaleString()}</td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                                  {!p.is_default && (
+                                    <button
+                                      type="button"
+                                      className="btn btn-sm btn-secondary"
+                                      onClick={() => handleSetDefaultGcp(p.id)}
+                                      title="Jadikan default project untuk channel"
+                                    >
+                                      ★ Set Default
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-danger"
+                                    onClick={() => handleDeleteGcpFromPool(p.id)}
+                                    title="Hapus project dari pool"
+                                  >
+                                    🗑️ Hapus
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div style={{ padding: '36px 20px', textAlign: 'center', border: '1px dashed var(--border-color)', borderRadius: '8px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                      Belum ada GCP Project di pool. Klik tombol <strong>"➕ Daftarkan GCP Project"</strong> di atas untuk menambahkan project pertama Anda.
+                    </div>
+                  )}
+                </div>
               </div>
 
             </div>
@@ -4623,6 +4306,70 @@ function App() {
                 </div>
               </div>
 
+              <div style={{
+                background: 'rgba(255, 255, 255, 0.02)',
+                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-md)',
+                padding: '16px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    🔑 GCP Project & Koneksi YouTube
+                  </span>
+                  {editingChannel && (
+                    editingChannel.is_oauth_connected ? (
+                      <span style={{ fontSize: '0.78rem', color: 'var(--success)', fontWeight: 600, background: 'rgba(52, 199, 89, 0.12)', padding: '3px 8px', borderRadius: 'var(--radius-pill)' }}>
+                        🟢 Terhubung
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.78rem', color: 'var(--danger)', fontWeight: 600, background: 'rgba(255, 59, 48, 0.12)', padding: '3px 8px', borderRadius: 'var(--radius-pill)' }}>
+                        🔴 Belum Terhubung
+                      </span>
+                    )
+                  )}
+                </div>
+
+                <div className="form-group" style={{ margin: 0 }}>
+                  <label htmlFor="chan-gcp-project" style={{ fontSize: '0.8rem', marginBottom: '4px' }}>
+                    Target GCP Project
+                  </label>
+                  <select
+                    id="chan-gcp-project"
+                    className="form-input"
+                    value={chanGcpProjectId}
+                    onChange={e => setChanGcpProjectId(e.target.value)}
+                  >
+                    <option value="">⚡ Otomatis (Default Pool Project)</option>
+                    {gcpPool.map(p => (
+                      <option key={p.id} value={p.project_id}>
+                        {p.project_name} ({p.account_label ? `${p.account_label} - ` : ''}{p.project_id}){p.is_default ? ' ★ Default' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px', margin: 0 }}>
+                    Jika dikosongkan, channel akan otomatis menggunakan Default GCP Project dari Pool.
+                  </p>
+                </div>
+
+                {editingChannel && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px' }}>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-primary"
+                      onClick={() => handleConnectYouTube(editingChannel.id, chanGcpProjectId || undefined)}
+                    >
+                      🔗 {editingChannel.is_oauth_connected ? 'Hubungkan Ulang YouTube (1-Klik)' : 'Sambungkan YouTube Sekarang (1-Klik)'}
+                    </button>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+                      Membuka popup Google OAuth resmi. Refresh token tersimpan otomatis.
+                    </span>
+                  </div>
+                )}
+              </div>
+
               <div className="form-group">
                 <label htmlFor="chan-folder">NAS Watch Folder Path</label>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -4644,10 +4391,9 @@ function App() {
                   </select>
                   <button
                     type="button"
-                    className="btn btn-secondary"
+                    className="btn btn-icon btn-secondary"
                     onClick={fetchWatchFolders}
                     title="Refresh folder list"
-                    style={{ padding: '8px 12px', flexShrink: 0, fontSize: '1rem' }}
                   >
                     🔄
                   </button>
@@ -4771,7 +4517,7 @@ function App() {
               <hr style={{ border: 'none', borderTop: '1px solid var(--border-color)', margin: '8px 0' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <h3 style={{ margin: 0 }}>Metadata Templates Rotation</h3>
-                <button type="button" className="btn btn-secondary" style={{ padding: '4px 10px', fontSize: '0.8rem' }} onClick={handleAddTemplate}>
+                <button type="button" className="btn btn-sm btn-secondary" onClick={handleAddTemplate}>
                   ➕ Add Template
                 </button>
               </div>
@@ -4784,7 +4530,7 @@ function App() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
                     <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--primary)' }}>Template Version #{idx + 1}</span>
                     {chanTemplates.length > 1 && (
-                      <button type="button" className="btn btn-danger" style={{ padding: '2px 8px', fontSize: '0.7rem' }} onClick={() => handleRemoveTemplate(idx)}>
+                      <button type="button" className="btn btn-sm btn-danger" onClick={() => handleRemoveTemplate(idx)}>
                         🗑️ Delete
                       </button>
                     )}

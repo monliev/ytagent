@@ -1,7 +1,7 @@
 import enum
 from typing import Optional
 from datetime import datetime, date
-from sqlalchemy import BigInteger, ForeignKey, String, Integer, Date, Enum, DateTime, Text, func
+from sqlalchemy import BigInteger, ForeignKey, String, Integer, Date, Enum, DateTime, Text, Boolean, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -13,11 +13,13 @@ class GCPProjectStatus(str, enum.Enum):
     QUOTA_EXCEEDED = "quota_exceeded"
 
 class GCPProject(Base):
-    """GCPProject database model for tracking channel API quotas."""
+    """GCPProject database model for tracking channel API quotas in a multi-project pool."""
     __tablename__ = "gcp_projects"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    channel_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("channels.id", ondelete="CASCADE"), nullable=False)
+    channel_id: Mapped[Optional[int]] = mapped_column(BigInteger, ForeignKey("channels.id", ondelete="SET NULL"), nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
+    account_label: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # e.g. "Akun Google Utama", "Akun Cadangan"
     project_name: Mapped[str] = mapped_column(String(128), nullable=False)
     project_id: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
     client_secret_path: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
@@ -34,7 +36,7 @@ class GCPProject(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
-    channel: Mapped["Channel"] = relationship("Channel")
+    channel: Mapped[Optional["Channel"]] = relationship("Channel")
 
     def __repr__(self) -> str:
         return f"<GCPProject id={self.id} project_id={self.project_id} status={self.status}>"

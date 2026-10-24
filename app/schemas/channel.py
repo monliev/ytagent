@@ -57,6 +57,7 @@ class ChannelUpdate(BaseModel):
 
 class ChannelResponse(ChannelBase):
     id: int
+    is_oauth_connected: bool = False
     created_at: datetime
     updated_at: datetime
 

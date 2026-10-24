@@ -149,11 +149,12 @@ class UploadServiceSync:
             db.add(curr_proj)
             db.commit()
             
-        # 2. Find next active project for channel
+        # 2. Find next active project from channel or global pool
         stmt_next = select(GCPProject).where(
-            GCPProject.channel_id == channel_id,
-            GCPProject.status == GCPProjectStatus.ACTIVE
-        ).order_by(GCPProject.id.asc())
+            (GCPProject.channel_id == channel_id) | (GCPProject.channel_id.is_(None)),
+            GCPProject.status == GCPProjectStatus.ACTIVE,
+            GCPProject.project_id != current_project_id
+        ).order_by(GCPProject.is_default.desc(), GCPProject.id.asc())
         
         next_proj = db.execute(stmt_next).scalars().first()
         
@@ -180,13 +181,13 @@ class UploadServiceSync:
         stmt_chan = select(Channel).where(Channel.id == video.channel_id)
         channel = db.execute(stmt_chan).scalar_one()
 
-        # Retrieve active project ID or select the first available
+        # Retrieve active project ID or select the first available from pool
         active_project_id = channel.gcp_project_id
         if not active_project_id:
             stmt_proj = select(GCPProject).where(
-                GCPProject.channel_id == channel.id,
+                (GCPProject.channel_id == channel.id) | (GCPProject.channel_id.is_(None)),
                 GCPProject.status == GCPProjectStatus.ACTIVE
-            ).order_by(GCPProject.id.asc())
+            ).order_by(GCPProject.is_default.desc(), GCPProject.id.asc())
             proj = db.execute(stmt_proj).scalars().first()
             if not proj:
                 raise ValueError(f"No active GCP projects configured for channel {channel.name}")

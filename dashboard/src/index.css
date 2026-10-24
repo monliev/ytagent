@@ -695,26 +695,32 @@ body {
 .badge-error      { background-color: var(--danger-light);   color: var(--danger); border: 1px solid var(--danger); }
 .badge-discarded  { background-color: var(--neutral-light);  color: var(--neutral); border: 1px solid var(--neutral); }
 
-/* ─── BUTTONS (Apple Pill CTAs & Utility Rects) ─── */
+/* ─── BUTTONS (Apple Pill CTAs & Uniform Micro-Interactions) ─── */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 10px 20px;
+  gap: 7px;
+  height: 38px;
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 0 16px;
   border-radius: var(--radius-pill);
-  font-size: 14px;
-  font-weight: 400;
-  letter-spacing: -0.224px;
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: -0.2px;
+  line-height: 1;
   cursor: pointer;
-  transition: transform var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
+  transition: transform var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
   border: 1px solid transparent;
   font-family: inherit;
   white-space: nowrap;
+  user-select: none;
+  text-decoration: none;
 }
 
 .btn:active:not(:disabled) {
-  transform: scale(0.95); /* System-wide Apple micro-interaction */
+  transform: scale(0.96); /* System-wide Apple micro-interaction */
 }
 
 .btn:focus-visible {
@@ -727,10 +733,11 @@ body {
   background-color: var(--primary);
   color: #FFFFFF;
   border-color: transparent;
-  font-weight: 400;
+  box-shadow: 0 1px 3px rgba(0, 102, 204, 0.2);
 }
 .btn-primary:hover:not(:disabled) {
   background-color: var(--primary-hover);
+  box-shadow: 0 2px 6px rgba(0, 102, 204, 0.3);
 }
 
 /* Secondary Button (Ghost Pill / Pearl Capsule) */
@@ -738,28 +745,34 @@ body {
   background-color: var(--bg-card);
   border-color: var(--border-color);
   color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .btn-secondary:hover:not(:disabled) {
   background-color: var(--bg-alt);
   border-color: var(--border-color-strong);
+  color: var(--text-primary);
 }
 
 .btn-success {
   background-color: var(--success);
   color: #FFFFFF;
+  border-color: transparent;
+  box-shadow: 0 1px 3px rgba(52, 199, 89, 0.2);
 }
 .btn-success:hover:not(:disabled) {
-  opacity: 0.9;
+  filter: brightness(1.05);
+  box-shadow: 0 2px 6px rgba(52, 199, 89, 0.3);
 }
 
 .btn-danger {
   background-color: var(--danger-light);
   color: var(--danger);
-  border: 1px solid var(--danger);
+  border: 1px solid rgba(255, 59, 48, 0.25);
 }
 .btn-danger:hover:not(:disabled) {
   background-color: var(--danger);
   color: #FFFFFF;
+  border-color: transparent;
 }
 
 .btn-ghost {
@@ -777,21 +790,55 @@ body {
 }
 
 .btn:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
   transform: none !important;
+  box-shadow: none !important;
 }
 
 .btn-icon {
   padding: 0;
-  width: 36px;
-  height: 36px;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
   border-radius: var(--radius-pill);
 }
 
 .btn-sm {
-  padding: 6px 14px;
-  font-size: 13px;
+  height: 30px !important;
+  min-height: 30px !important;
+  padding: 0 12px !important;
+  font-size: 12px !important;
+  gap: 5px;
+  border-radius: var(--radius-pill);
+}
+
+.btn-icon.btn-sm {
+  width: 30px !important;
+  height: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px !important;
+  padding: 0 !important;
+}
+
+.btn-lg {
+  height: 44px !important;
+  min-height: 44px !important;
+  padding: 0 22px !important;
+  font-size: 14.5px !important;
+  gap: 8px;
+  border-radius: var(--radius-pill);
+}
+
+.btn-outline {
+  background-color: transparent;
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+}
+.btn-outline:hover:not(:disabled) {
+  background-color: var(--bg-alt);
+  border-color: var(--border-color-strong);
 }
 
 /* ─── MODALS & DIALOGS (Frosted Glass Depth) ─── */

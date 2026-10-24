@@ -29,11 +29,22 @@ async def list_channels(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ) -> List[ChannelResponse]:
-    """Retrieve list of all active/inactive channels."""
+    """Retrieve list of all active/inactive channels with OAuth status."""
     logger.info("api_list_channels_called", user_id=current_user.id)
     stmt = select(Channel).order_by(Channel.id.asc())
     res = await db.execute(stmt)
-    return res.scalars().all()
+    channels = res.scalars().all()
+
+    stmt_creds = select(ChannelCredentials.channel_id).where(ChannelCredentials.is_active == True)
+    res_creds = await db.execute(stmt_creds)
+    connected_channel_ids = set(res_creds.scalars().all())
+
+    results = []
+    for c in channels:
+        item = ChannelResponse.model_validate(c)
+        item.is_oauth_connected = c.id in connected_channel_ids
+        results.append(item)
+    return results
 
 
 @router.get("/oauth-callback", response_class=HTMLResponse)
@@ -113,8 +124,8 @@ async def oauth_callback(
         logger.error("api_oauth_callback_invalid_state", error=str(e))
         return HTMLResponse(content="<h3>Invalid state parameter</h3>", status_code=400)
 
-    # Load GCP Project
-    stmt_proj = select(GCPProject).where(GCPProject.project_id == project_id, GCPProject.channel_id == channel_id)
+    # Load GCP Project from pool
+    stmt_proj = select(GCPProject).where(GCPProject.project_id == project_id)
     res_proj = await db.execute(stmt_proj)
     project_rec = res_proj.scalar_one_or_none()
     if not project_rec or not project_rec.client_secret_json:
@@ -122,7 +133,7 @@ async def oauth_callback(
 
     try:
         # Decrypt Client Secrets
-        decrypted = decrypt_token(channel_id, project_rec.client_secret_json)
+        decrypted = decrypt_token(project_rec.channel_id, project_rec.client_secret_json)
         secret_data = json.loads(decrypted)
         root_key = "installed" if "installed" in secret_data else "web"
         info = secret_data[root_key]
@@ -332,7 +343,16 @@ async def get_channel(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Channel not found"
         )
-    return channel
+    stmt_creds = select(ChannelCredentials).where(
+        ChannelCredentials.channel_id == id,
+        ChannelCredentials.is_active == True
+    )
+    res_creds = await db.execute(stmt_creds)
+    creds = res_creds.scalar_one_or_none()
+
+    item = ChannelResponse.model_validate(channel)
+    item.is_oauth_connected = creds is not None
+    return item
 
 @router.post("/", response_model=ChannelResponse, status_code=status.HTTP_201_CREATED)
 async def create_channel(
@@ -409,8 +429,124 @@ async def delete_channel(
     return None
 
 # ==========================================
-# GCP Projects & Credentials Endpoints
+# GCP Projects Pool & Credentials Endpoints
 # ==========================================
+
+@router.get("/gcp/pool", response_model=List[GCPProjectResponse])
+async def list_gcp_pool(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> List[GCPProjectResponse]:
+    """List all GCP Projects in the global pool (ordered by default first)."""
+    stmt = select(GCPProject).order_by(GCPProject.is_default.desc(), GCPProject.id.asc())
+    res = await db.execute(stmt)
+    return res.scalars().all()
+
+
+@router.post("/gcp/pool", response_model=GCPProjectResponse, status_code=status.HTTP_201_CREATED)
+async def create_or_update_gcp_pool_project(
+    payload: GCPProjectCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> GCPProjectResponse:
+    """Register or update a GCP Project in the pool (supports multiple projects from different accounts)."""
+    logger.info("api_create_or_update_gcp_pool", project_id=payload.project_id, user_id=current_user.id)
+
+    # If is_default is True, reset is_default on all existing projects
+    if payload.is_default:
+        stmt_all = select(GCPProject)
+        res_all = await db.execute(stmt_all)
+        for p in res_all.scalars().all():
+            p.is_default = False
+            db.add(p)
+
+    # Check if project already exists
+    stmt_existing = select(GCPProject).where(GCPProject.project_id == payload.project_id)
+    res_existing = await db.execute(stmt_existing)
+    existing = res_existing.scalar_one_or_none()
+
+    encrypted_json = encrypt_token(payload.channel_id or 0, payload.client_secret_json)
+
+    if existing:
+        existing.project_name = payload.project_name
+        existing.account_label = payload.account_label
+        existing.client_secret_json = encrypted_json
+        existing.quota_limit = payload.quota_limit
+        existing.is_default = payload.is_default
+        existing.status = GCPProjectStatus.ACTIVE
+        if payload.channel_id:
+            existing.channel_id = payload.channel_id
+        db.add(existing)
+        await db.commit()
+        await db.refresh(existing)
+        return existing
+
+    # If this is the very first project, make it default automatically
+    stmt_count = select(func.count(GCPProject.id))
+    res_count = await db.execute(stmt_count)
+    count = res_count.scalar() or 0
+    is_default = payload.is_default or (count == 0)
+
+    project = GCPProject(
+        channel_id=payload.channel_id,
+        project_name=payload.project_name,
+        project_id=payload.project_id,
+        account_label=payload.account_label or ("GCP Utama" if count == 0 else f"GCP Akun {count + 1}"),
+        is_default=is_default,
+        client_secret_json=encrypted_json,
+        client_secret_path="",
+        quota_limit=payload.quota_limit,
+        status=GCPProjectStatus.ACTIVE
+    )
+    db.add(project)
+    await db.commit()
+    await db.refresh(project)
+    return project
+
+
+@router.delete("/gcp/pool/{proj_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_gcp_pool_project(
+    proj_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> None:
+    """Delete a GCP project from the pool."""
+    stmt = select(GCPProject).where(GCPProject.id == proj_id)
+    res = await db.execute(stmt)
+    project = res.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GCP Project not found")
+
+    await db.delete(project)
+    await db.commit()
+    return None
+
+
+@router.post("/gcp/pool/{proj_id}/set-default", response_model=GCPProjectResponse)
+async def set_default_gcp_pool_project(
+    proj_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> GCPProjectResponse:
+    """Set a specific GCP project as the default for all channels."""
+    stmt_all = select(GCPProject)
+    res_all = await db.execute(stmt_all)
+    target = None
+    for p in res_all.scalars().all():
+        if p.id == proj_id:
+            p.is_default = True
+            target = p
+        else:
+            p.is_default = False
+        db.add(p)
+
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GCP Project not found")
+
+    await db.commit()
+    await db.refresh(target)
+    return target
+
 
 @router.get("/{id}/projects", response_model=List[GCPProjectResponse])
 async def list_channel_projects(
@@ -496,11 +632,11 @@ async def save_channel_credentials(
     """Register or update OAuth refresh token directly from the dashboard."""
     logger.info("api_save_channel_credentials_called", channel_id=id, project_id=payload.gcp_project_id, user_id=current_user.id)
     
-    # Verify GCP project exists for this channel
-    stmt_proj = select(GCPProject).where(GCPProject.project_id == payload.gcp_project_id, GCPProject.channel_id == id)
+    # Verify GCP project exists in pool
+    stmt_proj = select(GCPProject).where(GCPProject.project_id == payload.gcp_project_id)
     res_proj = await db.execute(stmt_proj)
     if not res_proj.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GCP Project not found for this channel")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GCP Project not found in database")
 
     # Encrypt raw refresh token
     encrypted_refresh = encrypt_token(id, payload.refresh_token)
@@ -720,8 +856,8 @@ async def get_channel_analytics(
 @router.get("/{id}/oauth-auth-url")
 async def get_oauth_auth_url(
     id: int,
-    project_id: str,
     redirect_uri: str,
+    project_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -735,18 +871,36 @@ async def get_oauth_auth_url(
     if not channel:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Channel not found")
         
-    # Load GCP Project
-    stmt_proj = select(GCPProject).where(GCPProject.project_id == project_id, GCPProject.channel_id == id)
-    res_proj = await db.execute(stmt_proj)
-    project_rec = res_proj.scalar_one_or_none()
+    target_project_id = project_id or channel.gcp_project_id
+    project_rec = None
+
+    if target_project_id:
+        stmt_proj = select(GCPProject).where(GCPProject.project_id == target_project_id)
+        res_proj = await db.execute(stmt_proj)
+        project_rec = res_proj.scalar_one_or_none()
+
+    # If no project found yet, look for default in pool
     if not project_rec:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="GCP Project not found for this channel")
-        
-    if not project_rec.client_secret_json:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No client secret JSON configured for this GCP Project")
-        
+        stmt_def = select(GCPProject).where(GCPProject.is_default == True)
+        res_def = await db.execute(stmt_def)
+        project_rec = res_def.scalar_one_or_none()
+
+    # If still none, get any project
+    if not project_rec:
+        stmt_any = select(GCPProject).order_by(GCPProject.id.asc())
+        res_any = await db.execute(stmt_any)
+        project_rec = res_any.scalar_one_or_none()
+
+    if not project_rec or not project_rec.client_secret_json:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Belum ada GCP Project yang terdaftar. Silakan daftarkan GCP Project di Global Settings terlebih dahulu."
+        )
+
+    target_project_id = project_rec.project_id
+
     try:
-        decrypted = decrypt_token(id, project_rec.client_secret_json)
+        decrypted = decrypt_token(project_rec.channel_id, project_rec.client_secret_json)
         data = json.loads(decrypted)
         root_key = "installed" if "installed" in data else "web"
         info = data[root_key]
@@ -758,7 +912,7 @@ async def get_oauth_auth_url(
     # Encode state containing channel_id, project_id, and redirect_uri
     state_payload = {
         "channel_id": id,
-        "project_id": project_id,
+        "project_id": target_project_id,
         "redirect_uri": redirect_uri
     }
     state_bytes = json.dumps(state_payload).encode("utf-8")
