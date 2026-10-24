@@ -348,6 +348,7 @@ function App() {
   // UI Toast and loading indicators
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isScanningOMV, setIsScanningOMV] = useState(false);
   const [patrollingQueue, setPatrollingQueue] = useState(false);
   const [retryingErrors, setRetryingErrors] = useState(false);
 
@@ -433,6 +434,33 @@ function App() {
       triggerToast('Network error refreshing dashboard data.', 'error');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const triggerScanOMV = async () => {
+    setIsScanningOMV(true);
+    triggerToast('Memulai pemindaian OMV storage...', 'success');
+    try {
+      const res = await fetch(`${API_URL}/videos/scan-omv`, {
+        method: 'POST',
+        headers: getHeaders()
+      });
+      const data = await res.json();
+      if (res.ok) {
+        if (data.newly_ingested_count > 0) {
+          triggerToast(`Berhasil mendeteksi ${data.newly_ingested_count} video baru dari OMV!`, 'success');
+        } else {
+          triggerToast(`Scan selesai: Tidak ada video baru (${data.already_processed_count} video sudah terdaftar).`, 'success');
+        }
+        await refreshAllData();
+      } else {
+        triggerToast(data.detail || 'Gagal memindai storage OMV.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      triggerToast('Gagal memindai storage OMV. Periksa koneksi backend.', 'error');
+    } finally {
+      setIsScanningOMV(false);
     }
   };
 
@@ -2022,6 +2050,16 @@ function App() {
             <button
               type="button"
               className="btn btn-secondary btn-pill"
+              onClick={triggerScanOMV}
+              disabled={isScanningOMV}
+              title="Scan OMV Storage untuk video baru"
+            >
+              {isScanningOMV ? '⏳ Scanning...' : '📁 Scan OMV'}
+            </button>
+
+            <button
+              type="button"
+              className="btn btn-secondary btn-pill"
               onClick={refreshAllData}
               title="Refresh All Data"
             >
@@ -2117,6 +2155,15 @@ function App() {
                   <span className="apple-mobile-user-role">{currentUser?.role || 'user'}</span>
                 </div>
               </div>
+              <button
+                type="button"
+                className="btn btn-secondary btn-pill"
+                onClick={() => { triggerScanOMV(); setIsMobileMenuOpen(false); }}
+                disabled={isScanningOMV}
+                style={{ width: '100%', marginBottom: '8px' }}
+              >
+                {isScanningOMV ? '⏳ Scanning OMV...' : '📁 Scan OMV Storage'}
+              </button>
               <button
                 type="button"
                 className="btn btn-secondary btn-pill"

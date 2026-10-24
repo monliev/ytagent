@@ -228,7 +228,7 @@ class IngestionService:
             # 2. Has a title source (preset template, title pool, or list template)
             # 3. Has active GCP credentials
             qualifies_for_auto_approve = False
-            if channel.auto_approve:
+            if channel.auto_approve and channel.is_active:
                 has_title_source = bool(
                     channel.preset_title_template or 
                     (channel.title_pool and channel.title_pool.strip()) or 

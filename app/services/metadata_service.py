@@ -175,14 +175,17 @@ class MetadataService:
 
     async def generate_ai_draft(self, filename: str, channel: Channel, duration_seconds: int = 0, db: Optional[Any] = None) -> dict[str, Any]:
         """Generate title, description, tags, and Hermes review note using Cloudflare LLM.
-        AI generation is temporarily disabled; returns rules-based template draft directly.
+        If CF_AI_ENABLED is False, returns rules-based template draft directly.
         """
+        from app.core.config import settings
+
         # Get base fallback first
         fallback = self.generate_draft(filename, channel, duration_seconds)
-        fallback["ai_review_note"] = "Draft generated using manual settings templates."
-        return fallback
-        
-        from app.core.config import settings
+
+        if not getattr(settings, "CF_AI_ENABLED", False):
+            fallback["ai_review_note"] = "Draft generated using manual settings templates."
+            return fallback
+
         import httpx
         import json
         from sqlalchemy import select

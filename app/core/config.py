@@ -46,9 +46,13 @@ class Settings(BaseSettings):
     SUPERVISOR_TELEGRAM_ID: int = 123456789
 
     # Cloudflare AI
+    CF_AI_ENABLED: bool = False
     CF_AI_URL: str = "https://dummy-ai-worker.workers.dev/"
     CF_AI_TOKEN: str = ""
     CF_AI_MODEL: str = "hermes"
+
+    # Thumbnail strategy: 'raw_frame' (as-is frame from video), 'none' (let YouTube pick), or 'cf_ai'
+    THUMBNAIL_STRATEGY: str = "raw_frame"
 
     # Encryption (Base64 Fernet Key)
     TOKEN_ENCRYPTION_KEY: str = "mDp_K2tZh0qB3DFvdzhZvJgHJB5_KZAmlt4bIBRIScc="

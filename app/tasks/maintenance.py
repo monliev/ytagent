@@ -435,7 +435,7 @@ def send_daily_hermes_report() -> dict:
                 if top_video_query and top_video_query.video_id:
                     v = db.query(Video).filter(Video.id == top_video_query.video_id).first()
                     if v:
-                        top_video_title = v.title or v.filename or "Untitled"
+                        top_video_title = getattr(v, "current_title", None) or v.filename or "Untitled"
                         top_video_views = top_video_query.total_gained
 
                 # 3. Current Queue Count (APPROVED + QUEUED)

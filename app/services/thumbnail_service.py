@@ -29,13 +29,37 @@ class ThumbnailService:
         Returns:
             list[dict]: A list of generated thumbnail specifications ready to save to database.
         """
+        # If thumbnail strategy is 'none', let YouTube choose native frame without custom thumbnail
+        if settings.THUMBNAIL_STRATEGY == "none":
+            logger.info("Thumbnail strategy is 'none'. Skipping custom thumbnail generation.")
+            return []
+
         # Ensure directories exist
         generated_dir = os.path.join(channel_folder_path, "thumbnails", "generated")
         os.makedirs(generated_dir, exist_ok=True)
 
         options = []
-        
-        # Build prompt variations to get distinct options
+
+        # If CF AI is disabled or strategy is raw_frame (as-is video loop), directly use the raw extracted frame
+        if not getattr(settings, "CF_AI_ENABLED", False) or settings.THUMBNAIL_STRATEGY == "raw_frame":
+            logger.info(f"Using raw extracted video frame as-is for video ID {video_id}")
+            option_filename = f"vid_{video_id}_thumb_raw.jpg"
+            option_path = os.path.join(generated_dir, option_filename)
+            try:
+                import shutil
+                shutil.copy2(screenshot_path, option_path)
+                options.append({
+                    "image_path": option_path,
+                    "style_name": "raw_screenshot",
+                    "prompt_used": "Raw extracted video frame as-is (clean video loop)",
+                    "confidence_score": Decimal("90.00"),
+                    "is_selected": True
+                })
+                return options
+            except Exception as e:
+                logger.error(f"Failed to copy raw screenshot: {e}")
+
+        # Build prompt variations to get distinct options if CF AI is enabled
         prompt_variations = [
             f"{style_prompt}, masterpiece, 8k resolution, highly detailed",
             f"{style_prompt}, cinematic lighting, vibrant colors, artistic",
@@ -53,10 +77,10 @@ class ThumbnailService:
             if success:
                 options.append({
                     "image_path": option_path,
-                    "style_name": settings.TZ,  # or custom style label
+                    "style_name": f"cf_ai_option_{i + 1}",
                     "prompt_used": prompt,
-                    "confidence_score": Decimal("85.00"),  # Baseline high confidence for successful AI gen
-                    "is_selected": (i == 0)  # Select option 1 by default
+                    "confidence_score": Decimal("85.00"),
+                    "is_selected": (i == 0)
                 })
             else:
                 logger.warning(f"Cloudflare AI failed for option {i + 1}. Breaking to use local PIL fallback.")
@@ -65,13 +89,12 @@ class ThumbnailService:
         # Tier 2: Local PIL Fallback (if CF AI failed to generate all 3 options)
         if len(options) < 3:
             logger.info("Falling back to local PIL overlay generation (Tier 2)")
-            options.clear()  # Clear any partial success to ensure consistency
+            options.clear()
             
             option_filename = f"vid_{video_id}_thumb_fallback.jpg"
             option_path = os.path.join(generated_dir, option_filename)
             
             try:
-                # Read screenshot and generate overlay
                 image_bytes = generate_pil_thumbnail(
                     screenshot_path=screenshot_path,
                     title=video_title,
@@ -81,7 +104,6 @@ class ThumbnailService:
                 with open(option_path, "wb") as f:
                     f.write(image_bytes)
                 
-                # Register a single high-quality fallback option
                 options.append({
                     "image_path": option_path,
                     "style_name": "pil_fallback",
@@ -94,19 +116,18 @@ class ThumbnailService:
 
         # Tier 3: Use Raw Screenshot directly
         if not options:
-            logger.info("Falling back to raw frame-30 screenshot (Tier 3)")
+            logger.info("Falling back to raw frame screenshot (Tier 3)")
             option_filename = f"vid_{video_id}_thumb_raw.jpg"
             option_path = os.path.join(generated_dir, option_filename)
             
             try:
-                # Simply copy raw screenshot to target path
                 import shutil
                 shutil.copy2(screenshot_path, option_path)
                 
                 options.append({
                     "image_path": option_path,
                     "style_name": "raw_screenshot",
-                    "prompt_used": "Raw extracted video frame at second 30",
+                    "prompt_used": "Raw extracted video frame as-is",
                     "confidence_score": Decimal("50.00"),
                     "is_selected": True
                 })

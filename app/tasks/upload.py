@@ -67,11 +67,11 @@ def upload_video_task(self, video_id: int) -> Optional[str]:
             )
             return None
 
-        # Concurrency check via Redis lock
-        lock = redis_sync_client.lock("youtube_upload_global_lock", timeout=1800)
+        # Concurrency check via per-channel Redis lock (allows distinct channels to upload in parallel)
+        lock = redis_sync_client.lock(f"youtube_upload_lock:channel:{video.channel_id}", timeout=1800)
         acquired = lock.acquire(blocking=False)
         if not acquired:
-            logger.info("celery_upload_lock_busy", video_id=video_id)
+            logger.info("celery_upload_channel_lock_busy", video_id=video_id, channel_id=video.channel_id)
             raise self.retry(countdown=60)
 
         try:

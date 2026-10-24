@@ -20,6 +20,7 @@ from app.tasks.upload import upload_video_task
 from app.utils.scheduling import calculate_next_schedule_time
 from app.schemas.video import VideoDetectRequest, VideoResponse, VideoMetadataUpdate, VideoThumbnailSelect, ThumbnailDraftResponse, AIEnhancementResponse, VideoMoveRequest
 from app.services.ingestion_service import IngestionService
+from app.core.config import settings
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -1245,6 +1246,78 @@ async def move_video_to_staging(
     )
     db.add(log_entry)
     await db.commit()
-    await db.refresh(video)
-    
     return video
+
+
+@router.post("/scan-omv", status_code=status.HTTP_200_OK)
+async def scan_omv_storage(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+) -> dict:
+    """Trigger an on-demand scan of the OMV storage mount.
+    
+    Discovers any newly rendered or copied video files, verifies their presence against
+    the database, and processes them immediately without waiting for periodic background tasks.
+    """
+    omv_path = os.path.abspath(settings.OMV_MOUNT_PATH)
+    if not os.path.isdir(omv_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"OMV mount path '{omv_path}' is not accessible on the server."
+        )
+
+    allowed_exts = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+    candidate_files = []
+
+    # Walk directory to find candidate videos
+    for root, _dirs, files in os.walk(omv_path):
+        for fname in files:
+            if fname.startswith("."):
+                continue
+            _, ext = os.path.splitext(fname)
+            if ext.lower() in allowed_exts:
+                full_path = os.path.join(root, fname)
+                parent_dir = os.path.dirname(full_path)
+                if parent_dir != omv_path:  # Must be inside a channel folder
+                    candidate_files.append((fname, full_path, parent_dir))
+
+    ingested = []
+    skipped = 0
+
+    for fname, full_path, channel_dir in candidate_files:
+        # Check if already in DB
+        stmt = select(Video.id).where(Video.file_path == full_path)
+        res = await db.execute(stmt)
+        if res.scalar_one_or_none():
+            skipped += 1
+            continue
+
+        try:
+            file_size = os.path.getsize(full_path)
+            if file_size <= 0:
+                continue
+
+            video = await ingestion_service.process_detection(
+                db=db,
+                filename=fname,
+                file_path=full_path,
+                file_size_bytes=file_size,
+                channel_name=channel_dir
+            )
+            ingested.append({
+                "video_id": video.id,
+                "title": video.current_title,
+                "filename": fname,
+                "status": video.status.value
+            })
+        except Exception as exc:
+            logger.error("omv_manual_scan_file_failed", filename=fname, error=str(exc))
+
+    return {
+        "status": "success",
+        "total_scanned": len(candidate_files),
+        "newly_ingested_count": len(ingested),
+        "already_processed_count": skipped,
+        "ingested_videos": ingested
+    }
+
