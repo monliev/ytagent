@@ -406,26 +406,33 @@ body {
 .apple-sub-nav-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 /* Channel Context Switcher (Apple Option Chip Pill) */
 .apple-channel-picker-wrap {
   position: relative;
+  display: inline-flex;
+  align-items: center;
 }
 
 .apple-chip-pill {
   background-color: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-pill);
-  padding: 7px 14px;
+  height: 34px;
+  min-height: 34px;
+  box-sizing: border-box;
+  padding: 0 14px;
   font-size: 13px;
   font-weight: 500;
   color: var(--text-primary);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
+  line-height: 1;
   transition: background-color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
   font-family: inherit;
   white-space: nowrap;
@@ -437,7 +444,25 @@ body {
 }
 
 .apple-chip-pill:active {
-  transform: scale(0.95);
+  transform: scale(0.97);
+}
+
+/* Enforce identical dimensions for all buttons in sub-nav actions */
+.apple-sub-nav-actions .btn,
+.apple-sub-nav-actions .apple-chip-pill {
+  height: 34px !important;
+  min-height: 34px !important;
+  max-height: 34px !important;
+  box-sizing: border-box !important;
+  padding: 0 14px !important;
+  font-size: 13px !important;
+  font-weight: 500 !important;
+  line-height: 1 !important;
+  border-radius: var(--radius-pill) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
 }
 
 .apple-chip-dot {
